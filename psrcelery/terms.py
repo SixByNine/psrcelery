@@ -14,13 +14,26 @@ class ExpTerm(celerite.terms.Term):
             np.exp(log_amp), 1 / length
         )
 
+class ExpTermLog(celerite.terms.Term):
+    """
+    A simple exponential kernel.
+    """
+    parameter_names = ("log_amp", "log10_length")
+
+    def get_real_coefficients(self, params):
+        log_amp, log10_length = params
+        length = 10**log10_length
+        return (
+            np.exp(log_amp), 1 / length
+        )
+
 
 class SimpleProfileTerm(celerite.terms.Term):
     """
     This class defines the 'simple as possible' kernel, with a Gaussian in the
     phase direction and an exponential in the time direction.
     """
-    parameter_names = ("log_amp", "log10_width", "length")
+    parameter_names = ("log_amp", "log10_width", "log10_length")
 
     def __init__(self, *args, **kwargs):
         ncoef = kwargs.pop("ncoef", 32)
@@ -28,18 +41,18 @@ class SimpleProfileTerm(celerite.terms.Term):
         self.ncoef = ncoef
 
     def get_real_coefficients(self, params):
-        log_amp, log_width, length = params
+        log_amp, log_width, log10_length = params
         width = 10 ** log_width
-        conc = 1 / length
+        conc = 10**-log10_length
         zero_coef = np.sqrt(2 * np.pi * width ** 2)
         return (
             np.exp(log_amp) * zero_coef, conc
         )
 
     def get_complex_coefficients(self, params):
-        log_amp, log_width, length = params
+        log_amp, log_width, log10_length = params
         width = 10 ** log_width
-        conc = 1 / length
+        conc = 10 ** -log10_length
         omega0 = 2 * np.pi
 
         nc = self.ncoef

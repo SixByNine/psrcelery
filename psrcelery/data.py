@@ -196,7 +196,7 @@ class Celery:
 
     def data_model_plot(self,outname=None):
         nsub, nbin = self.data.shape
-        model_profiles_at_data = np.reshape(self.pred_mean, (nsub, nbin))
+        model_profiles_at_data = np.reshape(self.pred_mean, (nsub, -1))
 
         plt.figure(figsize=(18, 18), facecolor='lightgray')
         plt.subplot(132)
@@ -293,7 +293,7 @@ class Celery:
         profile_plot.plot(self.phs[self.onmask], np.mean(self.data[hiprof][:, self.onmask], axis=0), color='r',
                           alpha=0.5, label='high')
         profile_plot.plot(self.phs[self.onmask], self.avgprof[self.onmask], color='k', lw=2, label='total')
-        profile_plot.axvline(self.phs[self.onmask][most_variable_phase_bin] - 0.5, color='gray', ls='--', alpha=0.4,
+        profile_plot.axvline(self.phs[self.onmask][most_variable_phase_bin] , color='gray', ls='--', alpha=0.4,
                              label='most variable phase')
         profile_plot.legend()
 
