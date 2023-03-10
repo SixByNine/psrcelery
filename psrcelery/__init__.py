@@ -1,6 +1,6 @@
 from .terms import make_custom_profile_term
 
-__version__ = '0.1.2'
+__version__ = '0.1.3'
 
 from . import phase_kernels, terms
 from . import data

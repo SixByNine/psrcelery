@@ -57,8 +57,10 @@ def align_and_scale_one(prof, template, nharm=None):
     f_template = np.fft.rfft(template)
     f_prof = np.fft.rfft(prof)
 
+    min_spectral_bins = min(len(f_template),len(f_prof))
+
     # The cross correlation of a and b is the inverse transform of FT(a) times the conjugate of FT(b)
-    xspec = f_template * f_prof.conj()  # "cross spectrum"
+    xspec = f_template[:min_spectral_bins] * f_prof[:min_spectral_bins].conj()  # "cross spectrum"
     xcor = np.fft.irfft(xspec)  # Cross correlation
 
     ishift = np.argmax(np.abs(xcor))  # estimate of the shift directly from the peak cross-correlation
@@ -66,7 +68,7 @@ def align_and_scale_one(prof, template, nharm=None):
     # We need to define some bounds to search. (Actually this might not be optimal)
     lo = ishift - 1
     hi = ishift + 1
-    if nharm == None:
+    if nharm is None or nharm > len(xspec):
         nh = len(xspec)
     else:
         nh = nharm
