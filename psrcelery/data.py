@@ -134,15 +134,12 @@ class Celery:
         Nonbins = np.sum(self.onmask)
         self.ymask = np.tile(self.onmask, nsub)
 
-        scaled_pn = np.arange(np.sum(self.ymask)) / Nonbins
-
         # Round to the nearest day ... in future we should have this scaleable.
         rmjd = np.round(self.mjd)
         rmjd -= rmjd[0]
         if (np.any(np.diff(rmjd) < 1)):
             raise ValueError("Observations on the same day cause a problem (tofix)")
-
-        self.x = scaled_pn + np.repeat(rmjd, Nonbins)
+        self.x = np.tile(np.arange(Nonbins) / Nonbins, nsub) + np.repeat(rmjd, Nonbins)
 
         self.y = flatdata[self.ymask]
         self.yerr = np.repeat(offrms, nbin)[self.ymask]
