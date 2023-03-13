@@ -28,7 +28,7 @@ class Celery:
         self.pred_std = None
         self.pred_mean = None
         self.pred_block_cov = None
-        self.nudot = self.nudot_err = self.nudot_mjd = None
+        self.nudot_val = self.nudot_err = self.nudot_mjd = None
         self.x = self.y = self.yerr = None
         self.subdata = None
         self.offmask = None
@@ -47,6 +47,10 @@ class Celery:
             if self.__dict__[k].__class__ is np.ndarray:
                 data[k] = self.__dict__[k]
             if self.__dict__[k].__class__ is list:
+                data[k] = self.__dict__[k]
+            if self.__dict__[k].__class__ is float:
+                data[k] = self.__dict__[k]
+            if self.__dict__[k].__class__ is int:
                 data[k] = self.__dict__[k]
         np.savez(fname,**data)
 
@@ -71,6 +75,30 @@ class Celery:
         match = (phs > start) & (phs < end)
         # Remove the bins from the offmask!
         self.offmask = np.logical_and(self.offmask, np.logical_not(match))
+
+    def clean_data(self, iqr_cut):
+        nsub, nbin = self.data.shape
+        metric = []
+        ii = np.arange(nsub)
+        for i in ii:
+            xcor = np.correlate(self.data[i, self.offmask], self.data[i, self.offmask], mode='full')
+            l = len(xcor)
+            metric.append(np.sum((xcor[l // 2 + 1:]) ** 2) / xcor[l // 2] ** 2)
+        metric = np.array(metric)
+        u = np.percentile(metric, 25)
+        med = np.percentile(metric, 50)
+        l = np.percentile(metric, 75)
+        iqr = u - l
+        zap = np.logical_or(metric > (med - iqr_cut * iqr), metric < (med + iqr_cut * iqr))
+        good = np.logical_not(zap)
+        self.data = self.data[good]
+        self.mjd = self.mjd[good]
+
+    def set_nudot(self,nudot_mjd,nudot_val,nudot_err=None):
+        self.nudot_mjd = nudot_mjd
+        self.nudot_val = nudot_val
+        self.nudot_err = nudot_err
+
 
     def make_xydata(self):
         nsub, nbin = self.data.shape
@@ -153,6 +181,8 @@ class Celery:
             self.pred_std_resample = np.sqrt(np.diag(pred_cov_resample))
 
         self.number_output_days = number_output_days
+
+        self.kernel_values = np.reshape(self.cel_gp.kernel.get_value(self.x_resampled), (self.number_output_days, -1))
         return self.pred_mean_resample, self.pred_std_resample
 
     def get_phase_factor(self):
@@ -162,23 +192,27 @@ class Celery:
     def compute_eigenprofiles(self):
         def run_pca(data):
             pca = sklearn.decomposition.PCA(n_components=10)
-            eigenvalues = pca.fit_transform(data)
+            eigenvalues = pca.fit_transform(data).T
             eigenprofiles = pca.components_
-            return eigenprofiles, eigenvalues
+            return eigenvalues,eigenprofiles
 
         if not self.pred_mean_resample is None:
             self.eigenvalues_resample, self.eigenprofiles_resample = run_pca(np.reshape(self.pred_mean_resample,(self.number_output_days,-1)))
             if not self.pred_block_cov_resample is None:
                 ## NOTE - is this really correct?
-                self.eigenvalues_resample_err = np.sqrt(
-                    self.eigenprofiles_resample.T.dot(self.pred_block_cov_resample).dot(self.eigenprofiles_resample))
+                self.eigenvalues_resample_err = []
+                for c in self.eigenprofiles_resample:
+                    self.eigenvalues_resample_err.append(np.sqrt(
+                    c.T.dot(self.pred_block_cov_resample).dot(c)))
 
         if not self.pred_mean is None:
-            self.eigenvalues, self.eigenprofiles = run_pca(self.reshape(self.pred_mean,(self.number_profiles,-1)))
+            self.eigenvalues, self.eigenprofiles = run_pca(np.reshape(self.pred_mean,(self.number_profiles,-1)))
             if not self.pred_block_cov is None:
                 ## NOTE - is this really correct?
-                self.eigenvalues_err = np.sqrt(
-                    self.eigenprofiles.T.dot(self.pred_block_cov).dot(self.eigenprofiles))
+                self.eigenvalues_err = []
+                for c in self.eigenprofiles:
+                    self.eigenvalues_err.append(np.sqrt(
+                        c.T.dot(self.pred_block_cov).dot(c)))
 
     def data_model_plot(self, outname=None):
         nsub, nbin = self.data.shape
@@ -201,7 +235,7 @@ class Celery:
             plt.show()
 
     def rainbowplot(self, outname=None, show_pca = True, show_nudot = True, figsize=(12,18),pca_comps=[0]):
-        if self.nudot is None:
+        if self.nudot_val is None:
             show_nudot=False
         if self.eigenvalues is None and self.eigenvalues_resample is None:
             show_pca = False
@@ -220,8 +254,7 @@ class Celery:
         vm = np.amax(np.abs(model_profiles))
 
         extent = (self.phs[self.onmask][0], self.phs[self.onmask][-1], self.mjd[0], self.mjd[-1])
-
-        kvals = np.reshape(self.cel_gp.kernel.get_value(self.x_resampled), (self.number_output_days, -1))
+        kvals = self.kernel_values
         _, outphs = kvals.shape
         kvals = np.roll(kvals, outphs // 2, 1)
         kvals = np.vstack((np.flip(kvals, axis=0), kvals))
@@ -334,26 +367,26 @@ class Celery:
             left_plot.set_ylabel("MJD")
             left_plot.set_ylim(extent[2], extent[3])
             left_plot.yaxis.set_tick_params(labelleft=True, labelright=False, right=True, left=True, direction='in')
-            if show_nudot:
-                ax_nudot = left_plot.twiny()
-                ax_nudot.set_xlabel("nudot")
-                ax_nudot.plot(self.nudot,self.nudot_mjd, color='k', ls='--')
-                if not self.nudot_err is None:
-                    ax_nudot.fill_betweenx(self.nudot_mjd,self.nudot-self.nudot_err,self.nudot+self.nudot_err,color='k',alpha=0.3)
             if show_pca:
                 for icomp in pca_comps:
                     if not self.eigenvalues_resample is None:
                         eigenvalues = self.eigenvalues_resample[icomp]
                         eigenvalues_err = self.eigenvalues_resample_err[icomp]
-                        e_mjd = self.mjd_resampled
+                        e_mjd = self.mjd_resampled+self.mjd[0]
                     else:
                         eigenvalues = self.eigenvalues[icomp]
                         eigenvalues_err = self.eigenvalues_err[icomp]
                         e_mjd = self.mjd
-                    plt.plot(eigenvalues,e_mjd)
+                    left_plot.plot(eigenvalues,e_mjd)
                     if not eigenvalues_err is None:
-                        plt.fill_betweenx(e_mjd,eigenvalues-eigenvalues_err,eigenvalues+eigenvalues_err,alpha=0.5)
-
+                        left_plot.fill_betweenx(e_mjd,eigenvalues-eigenvalues_err,eigenvalues+eigenvalues_err,alpha=0.5)
+            if show_nudot:
+                ax_nudot = left_plot.twiny()
+                ax_nudot.set_xlabel("nudot")
+                ax_nudot.plot(self.nudot_val, self.nudot_mjd, color='k', ls='--')
+                if not self.nudot_err is None:
+                    ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val - self.nudot_err, self.nudot_val + self.nudot_err,
+                                           color='k', alpha=0.3)
         if not (outname is None):
             plt.savefig(outname)
         else:
