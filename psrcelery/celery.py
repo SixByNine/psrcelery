@@ -3,15 +3,18 @@ import numpy as np
 import sklearn.decomposition
 from matplotlib import pyplot as plt
 import scipy.stats
+from psrcelery import terms
+
 
 def loadCelery(fname):
     datfile = np.load(fname)
     data = datfile['data']
     mjd = datfile['mjd']
-    celery = Celery(data,mjd)
+    celery = Celery(data, mjd)
     for k in datfile.keys():
         celery.__dict__[k] = datfile[k]
     return celery
+
 
 class Celery:
     def __init__(self, data, mjd):
@@ -41,7 +44,7 @@ class Celery:
         self.avgprof = np.median(self.data, axis=0)
         self.reset_onoff()
 
-    def save(self,fname):
+    def save(self, fname):
         data = {}
         for k in self.__dict__:
             if self.__dict__[k].__class__ is np.ndarray:
@@ -52,9 +55,7 @@ class Celery:
                 data[k] = self.__dict__[k]
             if self.__dict__[k].__class__ is int:
                 data[k] = self.__dict__[k]
-        np.savez(fname,**data)
-
-
+        np.savez(fname, **data)
 
     def reset_onoff(self):
         nsub, nbin = self.data.shape
@@ -94,16 +95,17 @@ class Celery:
         self.data = self.data[good]
         self.mjd = self.mjd[good]
 
-    def set_nudot(self,nudot_mjd,nudot_val,nudot_err=None):
+    def set_nudot(self, nudot_mjd, nudot_val, nudot_err=None):
         self.nudot_mjd = nudot_mjd
         self.nudot_val = nudot_val
         self.nudot_err = nudot_err
 
-
     def make_xydata(self):
         nsub, nbin = self.data.shape
         self.number_profiles = nsub
-        self.subdata = self.data - np.tile(self.avgprof, nsub).reshape((nsub, nbin))
+        template_subtracted_data = self.data - np.tile(self.avgprof, nsub).reshape((nsub, nbin))
+        self.subdata = template_subtracted_data - np.mean(template_subtracted_data[:, self.onmask], axis=1).reshape(-1,
+                                                                                                                    1)
         offrms = np.std(self.subdata[:, self.offmask], axis=1)
 
         flatdata = self.subdata.flatten()
@@ -121,6 +123,21 @@ class Celery:
         self.y = flatdata[self.ymask]
         self.yerr = np.repeat(offrms, nbin)[self.ymask]
         return self.x, self.y, self.yerr
+
+    def use_standard_kernel(self, log_min_width=-1.5):
+        nc = int(10 ** (
+            -log_min_width) / 2)  # This is determined empirically - I'm sure there is a better logical way to do it.
+        print(f"nc={nc}")
+        prior_bounds = {'log_amp': (-12, -2), 'log10_width': (log_min_width, -0.5),
+                        'log10_length': (np.log10(10), np.log10(4000))}
+        celkern = terms.SimpleProfileTerm(log_amp=-8,
+                                          log10_width=log_min_width,
+                                          log10_length=3,
+                                          ncoef=nc,
+                                          bounds=prior_bounds)
+
+        celkern += celerite.terms.JitterTerm(log_sigma=-6, bounds={'log_sigma': (-10, -1)})
+        self.set_gp_model(celkern)
 
     def set_gp_model(self, kernel):
         self.cel_gp = celerite.GP(kernel, mean=np.mean(self.y))
@@ -144,9 +161,11 @@ class Celery:
         return p0.reshape(nsamples, -1)
 
     def set_parameter_vector(self, params):
-        self.cel_gp.set_parameter_vector(params)
+        self.parameter_vector = np.array(params)
+        self.cel_gp.set_parameter_vector(self.parameter_vector)
 
     def predict_profiles(self, ignore_covariance=False):
+        self.cel_gp.set_parameter_vector(self.parameter_vector)
         self.pred_block_cov = None
         if ignore_covariance:
             self.pred_mean, pred_var = self.cel_gp.predict(self.y, return_var=True)
@@ -160,6 +179,7 @@ class Celery:
         return self.pred_mean, self.pred_std
 
     def predict_resampled(self, number_output_days=256, ignore_covariance=False):
+        self.cel_gp.set_parameter_vector(self.parameter_vector)
         self.pred_block_cov_resample = None
         rmjd = np.round(self.mjd)
         rmjd -= rmjd[0]
@@ -185,6 +205,15 @@ class Celery:
         self.kernel_values = np.reshape(self.cel_gp.kernel.get_value(self.x_resampled), (self.number_output_days, -1))
         return self.pred_mean_resample, self.pred_std_resample
 
+    def make_resampled_block_matricies(self):
+        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        xstack = self.x_resampled.reshape((self.number_output_days, -1))
+        self.pred_block_cov_resample = []
+        for i, x in enumerate(xstack):
+            print(f"{i}/{self.number_output_days}")
+            _, cov = self.cel_gp.predict(self.y, x, return_cov=True)
+            self.pred_block_cov_resample.append(cov)
+
     def get_phase_factor(self):
         dp = self.phs[1] - self.phs[0]
         return dp / (self.x_resampled[1] - self.x_resampled[0])
@@ -194,19 +223,20 @@ class Celery:
             pca = sklearn.decomposition.PCA(n_components=10)
             eigenvalues = pca.fit_transform(data).T
             eigenprofiles = pca.components_
-            return eigenvalues,eigenprofiles
+            return eigenvalues, eigenprofiles
 
         if not self.pred_mean_resample is None:
-            self.eigenvalues_resample, self.eigenprofiles_resample = run_pca(np.reshape(self.pred_mean_resample,(self.number_output_days,-1)))
+            self.eigenvalues_resample, self.eigenprofiles_resample = run_pca(
+                np.reshape(self.pred_mean_resample, (self.number_output_days, -1)))
             if not self.pred_block_cov_resample is None:
                 ## NOTE - is this really correct?
                 self.eigenvalues_resample_err = []
                 for c in self.eigenprofiles_resample:
                     self.eigenvalues_resample_err.append(np.sqrt(
-                    c.T.dot(self.pred_block_cov_resample).dot(c)))
+                        c.T.dot(self.pred_block_cov_resample).dot(c)))
 
         if not self.pred_mean is None:
-            self.eigenvalues, self.eigenprofiles = run_pca(np.reshape(self.pred_mean,(self.number_profiles,-1)))
+            self.eigenvalues, self.eigenprofiles = run_pca(np.reshape(self.pred_mean, (self.number_profiles, -1)))
             if not self.pred_block_cov is None:
                 ## NOTE - is this really correct?
                 self.eigenvalues_err = []
@@ -234,12 +264,12 @@ class Celery:
         else:
             plt.show()
 
-    def rainbowplot(self, outname=None, show_pca = True, show_nudot = True, figsize=(12,18),pca_comps=[0]):
+    def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(12, 18), pca_comps=[0]):
         if self.nudot_val is None:
-            show_nudot=False
+            show_nudot = False
         if self.eigenvalues is None and self.eigenvalues_resample is None:
             show_pca = False
-        threecolumn = show_nudot or show_pca ## we use a three column layout
+        threecolumn = show_nudot or show_pca  ## we use a three column layout
 
         nsub, nbin = self.data.shape
 
@@ -266,24 +296,30 @@ class Celery:
         alpha[sigma < 3] = scipy.special.erf(sigma[sigma < 3] / 2)
 
         if threecolumn:
-            width_ratio=6
-            fig, ((top_left_plot, profile_plot, kernel_plot), (left_plot,main_plot, err_plot)) = plt.subplots(2, 3, facecolor='white',
-                                                                                     gridspec_kw={
-                                                                                         'width_ratios': [1,3,3/width_ratio],
-                                                                                         'height_ratios': [1,
-                                                                                                           height_ratio],
-                                                                                         'wspace': 0.02},
-                                                                                     figsize=figsize)
-            fig.delaxes(top_left_plot) ## we don't use this one right now
+            width_ratio = 6
+            fig, ((top_left_plot, profile_plot, kernel_plot), (left_plot, main_plot, err_plot)) = plt.subplots(2, 3,
+                                                                                                               facecolor='white',
+                                                                                                               gridspec_kw={
+                                                                                                                   'width_ratios': [
+                                                                                                                       1,
+                                                                                                                       3,
+                                                                                                                       3 / width_ratio],
+                                                                                                                   'height_ratios': [
+                                                                                                                       1,
+                                                                                                                       height_ratio],
+                                                                                                                   'wspace': 0.02},
+                                                                                                               figsize=figsize)
+            fig.delaxes(top_left_plot)  ## we don't use this one right now
 
         else:
-            width_ratio=3
+            width_ratio = 3
             fig, ((profile_plot, kernel_plot), (main_plot, err_plot)) = plt.subplots(2, 2, facecolor='white',
-                                                                                 gridspec_kw={'width_ratios': [3, 3/width_ratio],
-                                                                                              'height_ratios': [1,
-                                                                                                                height_ratio],
-                                                                                              'wspace': 0.02},
-                                                                                 figsize=figsize)
+                                                                                     gridspec_kw={'width_ratios': [3,
+                                                                                                                   3 / width_ratio],
+                                                                                                  'height_ratios': [1,
+                                                                                                                    height_ratio],
+                                                                                                  'wspace': 0.02},
+                                                                                     figsize=figsize)
 
         ## MAIN RAINBOW PLOT
         main_plot.set_title("GP Model")
@@ -334,14 +370,16 @@ class Celery:
         lowprof = model_profiles_at_data[:, most_variable_phase_bin] < -0.01
         hiprof = model_profiles_at_data[:, most_variable_phase_bin] > 0.01
 
-        profile_plot.plot(self.phs[self.onmask], np.mean(self.data[lowprof][:, self.onmask], axis=0), color='b',
-                          alpha=0.5, label='low')
-        profile_plot.plot(self.phs[self.onmask], np.mean(self.data[hiprof][:, self.onmask], axis=0), color='r',
-                          alpha=0.5, label='high')
+        if not show_pca:
+            profile_plot.plot(self.phs[self.onmask], np.mean(self.data[lowprof][:, self.onmask], axis=0), color='b',
+                              alpha=0.5, label='low')
+            profile_plot.plot(self.phs[self.onmask], np.mean(self.data[hiprof][:, self.onmask], axis=0), color='r',
+                              alpha=0.5, label='high')
+
+        profile_plot.axhline(0, color='gray')
         profile_plot.plot(self.phs[self.onmask], self.avgprof[self.onmask], color='k', lw=2, label='total')
         profile_plot.axvline(self.phs[self.onmask][most_variable_phase_bin], color='gray', ls='--', alpha=0.4,
                              label='most variable phase')
-        profile_plot.legend()
 
         profile_plot.set_xlim(extent[0], extent[1])
         profile_plot.set_xlabel("Phase")
@@ -371,22 +409,35 @@ class Celery:
                 for icomp in pca_comps:
                     if not self.eigenvalues_resample is None:
                         eigenvalues = self.eigenvalues_resample[icomp]
-                        eigenvalues_err = self.eigenvalues_resample_err[icomp]
-                        e_mjd = self.mjd_resampled+self.mjd[0]
+                        eigenprofile = self.eigenprofiles_resample[icomp]
+                        eigenvalues_err = None if self.eigenvalues_resample_err is None else \
+                            self.eigenvalues_resample_err[icomp]
+                        e_mjd = self.mjd_resampled + self.mjd[0]
                     else:
                         eigenvalues = self.eigenvalues[icomp]
-                        eigenvalues_err = self.eigenvalues_err[icomp]
+                        eigenprofile = self.eigenprofiles[icomp]
+                        eigenvalues_err = None if self.eigenvalues_err is None else self.eigenvalues_err[icomp]
                         e_mjd = self.mjd
-                    left_plot.plot(eigenvalues,e_mjd)
+                    left_plot.plot(eigenvalues, e_mjd, label=f'Eigenprofile({icomp})')
+                    profile_plot.plot(self.phs[self.onmask], eigenprofile)
                     if not eigenvalues_err is None:
-                        left_plot.fill_betweenx(e_mjd,eigenvalues-eigenvalues_err,eigenvalues+eigenvalues_err,alpha=0.5)
+                        left_plot.fill_betweenx(e_mjd, eigenvalues - eigenvalues_err, eigenvalues + eigenvalues_err,
+                                                alpha=0.5)
+                    if icomp == pca_comps[0]:
+                        proflo = self.avgprof[self.onmask] + eigenprofile * np.amin(eigenvalues)
+                        profhi = self.avgprof[self.onmask] + eigenprofile * np.amax(eigenvalues)
+                        profile_plot.plot(self.phs[self.onmask], proflo, color='b', alpha=0.5, label='low')
+                        profile_plot.plot(self.phs[self.onmask], profhi, color='r', alpha=0.5, label='high')
             if show_nudot:
                 ax_nudot = left_plot.twiny()
                 ax_nudot.set_xlabel("nudot")
                 ax_nudot.plot(self.nudot_val, self.nudot_mjd, color='k', ls='--')
                 if not self.nudot_err is None:
-                    ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val - self.nudot_err, self.nudot_val + self.nudot_err,
+                    ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val - self.nudot_err,
+                                           self.nudot_val + self.nudot_err,
                                            color='k', alpha=0.3)
+
+        profile_plot.legend()
         if not (outname is None):
             plt.savefig(outname)
         else:
