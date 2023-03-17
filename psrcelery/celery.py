@@ -1,9 +1,11 @@
+import multiprocessing
+
 import celerite
 import numpy as np
 import sklearn.decomposition
 from matplotlib import pyplot as plt
 import scipy.stats
-from psrcelery import terms
+from psrcelery import terms, celery_threads
 
 
 def loadCelery(fname):
@@ -124,12 +126,12 @@ class Celery:
         self.yerr = np.repeat(offrms, nbin)[self.ymask]
         return self.x, self.y, self.yerr
 
-    def use_standard_kernel(self, log_min_width=-1.5):
+    def use_standard_kernel(self, log_min_width=-1.5, min_length=10, max_length=4000, min_lnamp=-12, max_lnamp=-2):
         nc = int(10 ** (
             -log_min_width) / 2)  # This is determined empirically - I'm sure there is a better logical way to do it.
         print(f"nc={nc}")
-        prior_bounds = {'log_amp': (-12, -2), 'log10_width': (log_min_width, -0.5),
-                        'log10_length': (np.log10(10), np.log10(4000))}
+        prior_bounds = {'log_amp': (min_lnamp, max_lnamp), 'log10_width': (log_min_width, -0.5),
+                        'log10_length': (np.log10(min_length), np.log10(max_length))}
         celkern = terms.SimpleProfileTerm(log_amp=-8,
                                           log10_width=log_min_width,
                                           log10_length=3,
@@ -167,7 +169,7 @@ class Celery:
     def predict_profiles_blockwise(self):
         self.cel_gp.set_parameter_vector(self.parameter_vector)
         self.pred_block_cov = []
-        xstack = self.x.reshape((self.number_profiles,-1))
+        xstack = self.x.reshape((self.number_profiles, -1))
         pred_y = np.zeros_like(xstack)
         pred_yerr = np.zeros_like(xstack)
         for i, x in enumerate(xstack):
@@ -179,17 +181,17 @@ class Celery:
         self.pred_std = pred_yerr
         return self.pred_mean, self.pred_std
 
-    def predict_profiles_resampled_blockwise(self,number_output_days=256):
+    def predict_profiles_resampled_blockwise(self, number_output_days=256):
         self.cel_gp.set_parameter_vector(self.parameter_vector)
-        self.pred_block_cov_resample = None
+        self.pred_block_cov_resample = []
         rmjd = np.round(self.mjd)
         rmjd -= rmjd[0]
         Nonbins = np.sum(self.onmask)
-
+        self.number_output_days = number_output_days
         self.mjd_resampled = np.round(np.linspace(rmjd[0], rmjd[-1], number_output_days))
         self.x_resampled = np.tile(np.linspace(0, 1, Nonbins, endpoint=False), number_output_days)
         self.x_resampled += np.repeat(self.mjd_resampled, Nonbins)
-        xstack = self.x_resampled.reshape((self.number_output_days,-1))
+        xstack = self.x_resampled.reshape((self.number_output_days, -1))
         pred_y = np.zeros_like(xstack)
         pred_yerr = np.zeros_like(xstack)
         for i, x in enumerate(xstack):
@@ -199,7 +201,50 @@ class Celery:
             self.pred_block_cov_resample.append(cov)
         self.pred_mean_resample = pred_y
         self.pred_std_resample = pred_yerr
+        self.kernel_values = np.reshape(self.cel_gp.kernel.get_value(self.x_resampled), (self.number_output_days, -1))
         return self.pred_mean_resample, self.pred_std_resample
+
+    def predict_profiles_resampled_blockwise_THREADS(self, number_output_days=256, nthread=4):
+        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.pred_block_cov_resample = []
+        rmjd = np.round(self.mjd)
+        rmjd -= rmjd[0]
+        Nonbins = np.sum(self.onmask)
+        self.number_output_days = number_output_days
+        self.mjd_resampled = np.round(np.linspace(rmjd[0], rmjd[-1], number_output_days))
+        self.x_resampled = np.tile(np.linspace(0, 1, Nonbins, endpoint=False), number_output_days)
+        self.x_resampled += np.repeat(self.mjd_resampled, Nonbins)
+        xstack = self.x_resampled.reshape((self.number_output_days, -1))
+        pred_y = np.zeros_like(xstack)
+        pred_yerr = np.zeros_like(xstack)
+
+        with multiprocessing.Pool(nthread, initializer=celery_threads.init,
+                                  initargs=(self.cel_gp, xstack, self.y)) as pool:
+            ret = pool.map(celery_threads.run, range(len(xstack)))
+            for i, x in enumerate(xstack):
+                pred_y[i], pred_yerr[i], cov = ret[i]
+                self.pred_block_cov_resample.append(cov)
+        self.pred_mean_resample = pred_y
+        self.pred_std_resample = pred_yerr
+        self.kernel_values = np.reshape(self.cel_gp.kernel.get_value(self.x_resampled), (self.number_output_days, -1))
+        return self.pred_mean_resample, self.pred_std_resample
+
+    def predict_profiles_blockwise_THREADS(self, number_output_days=256, nthread=4):
+        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.pred_block_cov = []
+        xstack = self.x.reshape((self.number_profiles, -1))
+        pred_y = np.zeros_like(xstack)
+        pred_yerr = np.zeros_like(xstack)
+
+        with multiprocessing.Pool(nthread, initializer=celery_threads.init,
+                                  initargs=(self.cel_gp, xstack, self.y)) as pool:
+            ret = pool.map(celery_threads.run, range(len(xstack)))
+            for i, x in enumerate(xstack):
+                pred_y[i], pred_yerr[i], cov = ret[i]
+                self.pred_block_cov.append(cov)
+        self.pred_mean = pred_y
+        self.pred_std = pred_yerr
+        return self.pred_mean, self.pred_std
 
     def predict_profiles(self, ignore_covariance=False):
         self.cel_gp.set_parameter_vector(self.parameter_vector)
@@ -301,7 +346,8 @@ class Celery:
         else:
             plt.show()
 
-    def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(12, 18), pca_comps=[0]):
+    def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(12, 18), pca_comps=[0],
+                    interpolation=None, scale_plots=False):
         if self.nudot_val is None:
             show_nudot = False
         if self.eigenvalues is None and self.eigenvalues_resample is None:
@@ -360,7 +406,7 @@ class Celery:
 
         ## MAIN RAINBOW PLOT
         main_plot.set_title("GP Model")
-        main_plot.imshow(model_profiles, aspect='auto', origin='lower', interpolation='nearest', cmap='rainbow',
+        main_plot.imshow(model_profiles, aspect='auto', origin='lower', interpolation=interpolation, cmap='rainbow',
                          alpha=alpha,
                          extent=extent, vmin=-vm, vmax=vm)
         main_plot.set_xlabel("Phase")
@@ -373,6 +419,9 @@ class Celery:
 
         main_plot.set_ylim(extent[2], extent[3])
         main_plot.set_xlim(extent[0], extent[1])
+
+        for mjd in self.mjd:
+            main_plot.axhline(mjd, 0, 0.05, ls='-', color='gray', alpha=0.5)
 
         err = np.mean(model_profile_std, axis=1)
         err_plot.plot(err, np.linspace(self.mjd[0], self.mjd[1], self.number_output_days), color='k', alpha=0.5)
@@ -394,7 +443,7 @@ class Celery:
 
         err_plot.imshow(a1data, cmap='rainbow', aspect='auto', extent=(-vm, vm, self.mjd[0], self.mjd[1]),
                         alpha=a1alpha,
-                        interpolation='nearest', origin='lower')
+                        interpolation=interpolation, origin='lower')
 
         err_plot.yaxis.set_label_position("right")
         err_plot.yaxis.set_tick_params(labelleft=False, labelright=True, right=True, left=False, direction='in')
@@ -455,7 +504,20 @@ class Celery:
                         eigenprofile = self.eigenprofiles[icomp]
                         eigenvalues_err = None if self.eigenvalues_err is None else self.eigenvalues_err[icomp]
                         e_mjd = self.mjd
+                    if show_nudot:
+                        nudot_resamp = np.interp(self.mjd_resampled + self.mjd[0], self.nudot_mjd,
+                                                 self.nudot_val)
+                        r, _ = scipy.stats.pearsonr(eigenvalues, nudot_resamp)
+                        if r < 0:
+                            eigenprofile *= -1
+                            eigenvalues *= -1
+                        if icomp == pca_comps[0]:
+                            nudot_eigen_convert = np.poly1d(np.polyfit(eigenvalues, nudot_resamp, 1))
+                            eigen_nudot_convert = np.poly1d([1 / nudot_eigen_convert.coef[0],
+                                                             -nudot_eigen_convert.coef[1] / nudot_eigen_convert.coef[
+                                                                 0]])
                     left_plot.plot(eigenvalues, e_mjd, label=f'Eigenprofile({icomp})')
+                    left_plot.set_xlabel(r"$\lambda_n$")
                     profile_plot.plot(self.phs[self.onmask], eigenprofile)
                     if not eigenvalues_err is None:
                         left_plot.fill_betweenx(e_mjd, eigenvalues - eigenvalues_err, eigenvalues + eigenvalues_err,
@@ -473,6 +535,22 @@ class Celery:
                     ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val - self.nudot_err,
                                            self.nudot_val + self.nudot_err,
                                            color='k', alpha=0.3)
+                nudots = self.nudot_val[(self.nudot_mjd > extent[2]) & (self.nudot_mjd < extent[3])]
+                nudot_max = np.amax(nudots)
+                nudot_min = np.amin(nudots)
+                if scale_plots and show_pca:
+                    cmax = max(nudot_max, np.amax(nudot_eigen_convert(eigenvalues)))
+                    cmin = min(nudot_min, np.amin(nudot_eigen_convert(eigenvalues)))
+
+                    rng = cmax - cmin
+                    cmax += 0.1 * rng
+                    cmin -= 0.1 * rng
+                    ax_nudot.set_xlim(cmin, cmax)
+                    left_plot.set_xlim(eigen_nudot_convert(cmin), eigen_nudot_convert(cmax))
+
+                else:
+                    rng = nudot_max - nudot_min
+                    ax_nudot.set_xlim(nudot_min - 0.1 * rng, nudot_max + 0.1 * rng)
 
         profile_plot.legend()
         if not (outname is None):
