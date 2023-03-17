@@ -164,6 +164,43 @@ class Celery:
         self.parameter_vector = np.array(params)
         self.cel_gp.set_parameter_vector(self.parameter_vector)
 
+    def predict_profiles_blockwise(self):
+        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.pred_block_cov = []
+        xstack = self.x.reshape((self.number_profiles,-1))
+        pred_y = np.zeros_like(xstack)
+        pred_yerr = np.zeros_like(xstack)
+        for i, x in enumerate(xstack):
+            print(f"{i}/{self.number_profiles}")
+            pred_y[i], cov = self.cel_gp.predict(self.y, x, return_cov=True)
+            pred_yerr[i] = np.sqrt(np.diag(cov))
+            self.pred_block_cov.append(cov)
+        self.pred_mean = pred_y
+        self.pred_std = pred_yerr
+        return self.pred_mean, self.pred_std
+
+    def predict_profiles_resampled_blockwise(self,number_output_days=256):
+        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.pred_block_cov_resample = None
+        rmjd = np.round(self.mjd)
+        rmjd -= rmjd[0]
+        Nonbins = np.sum(self.onmask)
+
+        self.mjd_resampled = np.round(np.linspace(rmjd[0], rmjd[-1], number_output_days))
+        self.x_resampled = np.tile(np.linspace(0, 1, Nonbins, endpoint=False), number_output_days)
+        self.x_resampled += np.repeat(self.mjd_resampled, Nonbins)
+        xstack = self.x_resampled.reshape((self.number_output_days,-1))
+        pred_y = np.zeros_like(xstack)
+        pred_yerr = np.zeros_like(xstack)
+        for i, x in enumerate(xstack):
+            print(f"{i}/{self.number_output_days}")
+            pred_y[i], cov = self.cel_gp.predict(self.y, x, return_cov=True)
+            pred_yerr[i] = np.sqrt(np.diag(cov))
+            self.pred_block_cov_resample.append(cov)
+        self.pred_mean_resample = pred_y
+        self.pred_std_resample = pred_yerr
+        return self.pred_mean_resample, self.pred_std_resample
+
     def predict_profiles(self, ignore_covariance=False):
         self.cel_gp.set_parameter_vector(self.parameter_vector)
         self.pred_block_cov = None
