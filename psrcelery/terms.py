@@ -73,7 +73,6 @@ class SimpleProfileTerm(celerite.terms.Term):
 
 def make_custom_profile_term(phase_kernel, time_kernel, omega0=2 * np.pi, optimise_tau_real_only=False):
     pnames = time_kernel.parameter_names + phase_kernel.parameter_names
-    print(pnames)
 
     time_mask = np.array([k in time_kernel.parameter_names for k in pnames], dtype=bool)
     fourier_mask = np.array([k in phase_kernel.parameter_names for k in pnames], dtype=bool)
