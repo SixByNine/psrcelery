@@ -325,7 +325,7 @@ class Celery:
             plt.show()
 
     def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(12, 18), pca_comps=(0,),
-                    interpolation=None, scale_plots=False, eigenvalue_colors=None):
+                    interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile",cmap='rainbow'):
         if self.nudot_val is None:
             show_nudot = False
         if self.eigenvalues is None and self.eigenvalues_resample is None:
@@ -390,7 +390,7 @@ class Celery:
 
         # MAIN RAINBOW PLOT
         main_plot.set_title("GP Model")
-        main_plot.imshow(model_profiles, aspect='auto', origin='lower', interpolation=interpolation, cmap='rainbow',
+        main_plot.imshow(model_profiles, aspect='auto', origin='lower', interpolation=interpolation, cmap=cmap,
                          alpha=alpha, extent=extent, vmin=-vm, vmax=vm)
         main_plot.set_xlabel("Phase")
 
@@ -404,16 +404,17 @@ class Celery:
         main_plot.set_xlim(extent[0], extent[1])
 
         for mjd in self.mjd:
-            main_plot.axhline(mjd, 0, 0.05, ls='-', color='gray', alpha=0.5)
-
+            main_plot.axhline(mjd, 0, 0.02, ls='-', color='gray', alpha=0.5)
+            if threecolumn:
+                left_plot.axhline(mjd, 0.95, 1.0, ls='-', color='gray', alpha=0.5)
         err = np.mean(model_profile_std, axis=1)
-        err_plot.plot(err, np.linspace(self.mjd[0], self.mjd[1], self.number_output_days), color='k', alpha=0.5)
-        err_plot.plot(-err, np.linspace(self.mjd[0], self.mjd[1], self.number_output_days), color='k', alpha=0.5)
-        err_plot.plot(2 * err, np.linspace(self.mjd[0], self.mjd[1], self.number_output_days), color='k', ls=':',
+        err_plot.plot(err, self.mjd_resampled + self.mjd[0], color='k', alpha=0.5)
+        err_plot.plot(-err, self.mjd_resampled + self.mjd[0], color='k', alpha=0.5)
+        err_plot.plot(2 * err, self.mjd_resampled + self.mjd[0], color='k', ls=':',
                       alpha=0.5)
-        err_plot.plot(-2 * err, np.linspace(self.mjd[0], self.mjd[1], self.number_output_days), color='k', ls=':',
+        err_plot.plot(-2 * err, self.mjd_resampled + self.mjd[0], color='k', ls=':',
                       alpha=0.5)
-        err_plot.set_ylim(self.mjd[0], self.mjd[1])
+        err_plot.set_ylim(extent[2], extent[3])
         err_plot.set_xlabel("Signal (peak flux)")
 
         a1data = np.tile(np.linspace(-vm, vm, 256), self.number_output_days).reshape(self.number_output_days, -1)
@@ -424,7 +425,7 @@ class Celery:
 
         err_plot.set_title("Uncertainty & Colour scale")
 
-        err_plot.imshow(a1data, cmap='rainbow', aspect='auto', extent=(-vm, vm, self.mjd[0], self.mjd[1]),
+        err_plot.imshow(a1data, cmap=cmap, aspect='auto', extent=(-vm, vm, extent[2], extent[3]),
                         alpha=a1alpha,
                         interpolation=interpolation, origin='lower')
 
@@ -446,14 +447,14 @@ class Celery:
                               alpha=0.5, label='high')
 
         profile_plot.axhline(0, color='gray')
-        profile_plot.plot(self.phs[self.onmask], self.avgprof[self.onmask], color='k', lw=2, label='total')
+        profile_plot.plot(self.phs[self.onmask], self.avgprof[self.onmask], color='k', lw=2, label='Median Profile')
         profile_plot.axvline(self.phs[self.onmask][most_variable_phase_bin], color='gray', ls='--', alpha=0.4,
                              label='MVP')
 
         profile_plot.set_xlim(extent[0], extent[1])
         profile_plot.set_xlabel("Phase")
         profile_plot.set_ylabel("Amplitude")
-        profile_plot.set_title("Average Profile")
+        profile_plot.set_title(title)
 
         kernel_plot.set_title("Kernel")
         kernel_plot.imshow(kvals, aspect='auto', origin='lower',
@@ -487,6 +488,7 @@ class Celery:
                         eigenprofile = self.eigenprofiles[icomp]
                         eigenvalues_err = None if self.eigenvalues_err is None else self.eigenvalues_err[icomp]
                         e_mjd = self.mjd
+                    elab = ""
                     if show_nudot:
                         nudot_resamp = np.interp(self.mjd_resampled + self.mjd[0], self.nudot_mjd,
                                                  self.nudot_val)
@@ -499,20 +501,26 @@ class Celery:
                             eigen_nudot_convert = np.poly1d([1 / nudot_eigen_convert.coef[0],
                                                              -nudot_eigen_convert.coef[1] / nudot_eigen_convert.coef[
                                                                  0]])
-                    left_plot.plot(eigenvalues, e_mjd, label=f'$\\lambda_$({icomp})',color=eigenvalue_colors[icomp%len(eigenvalue_colors)])
+                        elab = f" [r={r:.2f}]"
+                    left_plot.plot(eigenvalues, e_mjd, label=f'$\\lambda_$({icomp})',
+                                   color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
                     left_plot.set_xlabel(r"$\lambda_n$")
-                    profile_plot.plot(self.phs[self.onmask], eigenprofile,color=eigenvalue_colors[icomp%len(eigenvalue_colors)],label=f"$\\mathbf{{e}}_{icomp}$")
+                    profile_plot.plot(self.phs[self.onmask], eigenprofile,
+                                      color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
+                                      label=f"$\\mathbf{{e}}_{icomp}$" + elab)
                     if eigenvalues_err is not None:
                         left_plot.fill_betweenx(e_mjd, eigenvalues - eigenvalues_err, eigenvalues + eigenvalues_err,
-                                                alpha=0.5,color=eigenvalue_colors[icomp%len(eigenvalue_colors)])
+                                                alpha=0.5, color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
                     if icomp == pca_comps[0]:
                         proflo = self.avgprof[self.onmask] + eigenprofile * np.amin(eigenvalues)
                         profhi = self.avgprof[self.onmask] + eigenprofile * np.amax(eigenvalues)
-                        profile_plot.plot(self.phs[self.onmask], proflo, color='b', alpha=0.5, label=f"$\\lambda$({icomp},min)$\\mathbf{{e}}_{icomp}$")
-                        profile_plot.plot(self.phs[self.onmask], profhi, color='r', alpha=0.5, label=f"$\\lambda$({icomp},max)$\\mathbf{{e}}_{icomp}$")
+                        profile_plot.plot(self.phs[self.onmask], proflo, color='b', alpha=0.5,
+                                          label=f"$+\\lambda$({icomp},min)$\\mathbf{{e}}_{icomp}$")
+                        profile_plot.plot(self.phs[self.onmask], profhi, color='r', alpha=0.5,
+                                          label=f"$+\\lambda$({icomp},max)$\\mathbf{{e}}_{icomp}$")
             if show_nudot:
                 ax_nudot = left_plot.twiny()
-                ax_nudot.set_xlabel("nudot")
+                ax_nudot.set_xlabel(r"$\dot{\nu}$ $(10^{-15}\mathrm{Hz^2})$")
                 ax_nudot.plot(self.nudot_val, self.nudot_mjd, color='k', ls='--')
                 if self.nudot_err is not None:
                     ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val - self.nudot_err,
@@ -535,8 +543,9 @@ class Celery:
                     rng = nudot_max - nudot_min
                     ax_nudot.set_xlim(nudot_min - 0.1 * rng, nudot_max + 0.1 * rng)
 
-        profile_plot.legend()
+        profile_plot.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
         if not (outname is None):
             plt.savefig(outname)
         else:
             plt.show()
+
