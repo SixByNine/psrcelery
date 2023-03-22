@@ -29,6 +29,8 @@ def loadCelery(fname):
 
 class Celery:
     def __init__(self, data, mjd):
+        self.eigenvalues_data = None
+        self.eigenvalue_data_err = None
         self.kernel_values = None
         self.x_resampled = None
         self.number_output_days = None
@@ -74,7 +76,7 @@ class Celery:
             if self.__dict__[k].__class__ is int:
                 data[k] = self.__dict__[k]
 
-        #if self.cel_gp is not None:
+        # if self.cel_gp is not None:
         #    data['cel_gp_bytes'] = np.frombuffer(pickle.dumps(self.cel_gp), dtype=np.uint8)
         np.savez(fname, **data)
 
@@ -286,13 +288,17 @@ class Celery:
             self.pred_mean_resample[np.isinf(self.pred_mean_resample)] = 0
             self.eigenvalues_resample, self.eigenprofiles_resample = run_pca(
                 np.reshape(self.pred_mean_resample, (self.number_output_days, -1)))
+
+            self.eigenvalues_data = np.dot(self.eigenprofiles_resample, self.subdata[:, self.onmask].T)
             if self.pred_block_cov_resample is not None:
                 # NOTE - is this really correct?
                 self.eigenvalues_resample_err = []
-                for c in self.eigenprofiles_resample:
+                self.eigenvalue_data_err = []
+                dataV = np.var(self.subdata[:, self.offmask], axis=1)
+                for i, c in enumerate(self.eigenprofiles_resample):
                     self.eigenvalues_resample_err.append(np.sqrt(
                         c.T.dot(self.pred_block_cov_resample).dot(c)))
-
+                    self.eigenvalue_data_err.append(np.sqrt(dataV[i] * np.dot(c, c)))  # not efficient, but who cares
         if self.pred_mean is not None:
             self.pred_mean[np.isnan(self.pred_mean)] = 0
             self.pred_mean[np.isinf(self.pred_mean)] = 0
@@ -325,7 +331,7 @@ class Celery:
             plt.show()
 
     def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(12, 18), pca_comps=(0,),
-                    interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile",cmap='rainbow'):
+                    interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile", cmap='rainbow'):
         if self.nudot_val is None:
             show_nudot = False
         if self.eigenvalues is None and self.eigenvalues_resample is None:
@@ -490,12 +496,18 @@ class Celery:
                         e_mjd = self.mjd
                     elab = ""
                     if show_nudot:
+                        # nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
+                        #                         self.nudot_val)
+                        # r2,_ = scipy.stats.pearsonr(self.eigenvalues[icomp],nudot_resamp2)
+
                         nudot_resamp = np.interp(self.mjd_resampled + self.mjd[0], self.nudot_mjd,
                                                  self.nudot_val)
                         r, _ = scipy.stats.pearsonr(eigenvalues, nudot_resamp)
+                        sign = 1
                         if r < 0:
                             eigenprofile *= -1
                             eigenvalues *= -1
+                            sign = -1
                         if icomp == pca_comps[0]:
                             nudot_eigen_convert = np.poly1d(np.polyfit(eigenvalues, nudot_resamp, 1))
                             eigen_nudot_convert = np.poly1d([1 / nudot_eigen_convert.coef[0],
@@ -508,6 +520,11 @@ class Celery:
                     profile_plot.plot(self.phs[self.onmask], eigenprofile,
                                       color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
                                       label=f"$\\mathbf{{e}}_{icomp}$" + elab)
+                    # left_plot.errorbar(sign*self.eigenvalues_data[icomp], self.mjd, xerr=self.eigenvalue_data_err[icomp],
+                    #                   ls='None', marker='x', color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
+                    profile_plot.plot(self.phs[self.onmask], eigenprofile,
+                                      color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
+                                      label=f"$\\mathbf{{e}}_{icomp}$")
                     if eigenvalues_err is not None:
                         left_plot.fill_betweenx(e_mjd, eigenvalues - eigenvalues_err, eigenvalues + eigenvalues_err,
                                                 alpha=0.5, color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
@@ -548,4 +565,3 @@ class Celery:
             plt.savefig(outname)
         else:
             plt.show()
-
