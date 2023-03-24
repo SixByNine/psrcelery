@@ -59,6 +59,7 @@ class Celery:
         self.cel_gp = None
         self.data = data
         self.mjd = mjd
+        self.rounded_mjd_factor = 1
         nsub, nbin = self.data.shape
         self.phs = np.linspace(0, 1, nbin, endpoint=False)
         self.avgprof = np.median(self.data, axis=0)
@@ -105,8 +106,9 @@ class Celery:
         self.nudot_val = nudot_val
         self.nudot_err = nudot_err
 
-    def make_xydata(self):
+    def make_xydata(self,rounded_mjd_factor=1):
         nsub, nbin = self.data.shape
+        self.rounded_mjd_factor=rounded_mjd_factor
         self.number_profiles = nsub
         template_subtracted_data = self.data - np.tile(self.avgprof, nsub).reshape((nsub, nbin))
         self.subdata = template_subtracted_data - np.mean(template_subtracted_data[:, self.onmask], axis=1).reshape(-1,
@@ -119,7 +121,7 @@ class Celery:
         self.ymask = np.tile(self.onmask, nsub)
 
         # Round to the nearest day ... in future we should have this scaleable.
-        rmjd = np.round(self.mjd)
+        rmjd = np.round(self.mjd*self.rounded_mjd_factor)
         rmjd -= rmjd[0]
         if np.any(np.diff(rmjd) < 1):
             raise ValueError("Observations on the same day cause a problem (tofix)")
@@ -207,12 +209,13 @@ class Celery:
 
     def predict_profiles_resampled_blockwise(self, number_output_days=256, nthread=1):
         self.cel_gp.set_parameter_vector(self.parameter_vector)
-        rmjd = np.round(self.mjd)
+        rmjd = np.round(self.mjd*self.rounded_mjd_factor)
         rmjd -= rmjd[0]
         self.number_output_days = number_output_days
-        self.mjd_resampled = np.round(np.linspace(rmjd[0], rmjd[-1], number_output_days))
+        self.rmjd_resampled = np.round(np.linspace(rmjd[0], rmjd[-1], number_output_days))
+        self.mjd_resampled = self.rmjd_resampled/self.rounded_mjd_factor
         self.x_resampled = np.tile(np.linspace(0, 1, self.number_onpulse_bins, endpoint=False), number_output_days)
-        self.x_resampled += np.repeat(self.mjd_resampled, self.number_onpulse_bins)
+        self.x_resampled += np.repeat(self.rmjd_resampled, self.number_onpulse_bins)
         xstack = self.x_resampled.reshape((self.number_output_days, -1))
 
         self.pred_mean_resample, self.pred_std_resample, self.pred_block_cov_resample = self._predict_blocks(xstack,
@@ -238,12 +241,13 @@ class Celery:
     def predict_resampled(self, number_output_days=256, ignore_covariance=False):
         self.cel_gp.set_parameter_vector(self.parameter_vector)
         self.pred_block_cov_resample = None
-        rmjd = np.round(self.mjd)
+        rmjd = np.round(self.mjd*self.rounded_mjd_factor)
         rmjd -= rmjd[0]
 
-        self.mjd_resampled = np.round(np.linspace(rmjd[0], rmjd[-1], number_output_days))
+        self.rmjd_resampled = np.round(np.linspace(rmjd[0], rmjd[-1], number_output_days))
+        self.mjd_resampled = self.rmjd_resampled/self.rounded_mjd_factor
         self.x_resampled = np.tile(np.linspace(0, 1, self.number_onpulse_bins, endpoint=False), number_output_days)
-        self.x_resampled += np.repeat(self.mjd_resampled, self.number_onpulse_bins)
+        self.x_resampled += np.repeat(self.rmjd_resampled, self.number_onpulse_bins)
         print(len(self.x_resampled))
         if ignore_covariance:
             self.pred_mean_resample, pred_var = self.cel_gp.predict(self.y, self.x_resampled, return_var=True)
@@ -309,6 +313,10 @@ class Celery:
                 for c in self.eigenprofiles:
                     self.eigenvalues_err.append(np.sqrt(
                         c.T.dot(self.pred_block_cov).dot(c)))
+    def dampen_edges(self, threshold=0.05):
+        edge_mask = self.avgprof[self.onmask] < threshold
+        self.pred_mean -= np.mean(self.pred_mean[:, edge_mask], axis=1).reshape((-1,1))
+        self.pred_mean_resample -= np.mean(self.pred_mean_resample[:, edge_mask], axis=1).reshape((-1,1))
 
     def data_model_plot(self, outname=None):
         nsub, nbin = self.data.shape
@@ -496,9 +504,9 @@ class Celery:
                         e_mjd = self.mjd
                     elab = ""
                     if show_nudot:
-                        # nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
-                        #                         self.nudot_val)
-                        # r2,_ = scipy.stats.pearsonr(self.eigenvalues[icomp],nudot_resamp2)
+                        nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
+                                                self.nudot_val)
+                        r2,_ = scipy.stats.pearsonr(self.eigenvalues[icomp],nudot_resamp2)
 
                         nudot_resamp = np.interp(self.mjd_resampled + self.mjd[0], self.nudot_mjd,
                                                  self.nudot_val)
@@ -513,14 +521,14 @@ class Celery:
                             eigen_nudot_convert = np.poly1d([1 / nudot_eigen_convert.coef[0],
                                                              -nudot_eigen_convert.coef[1] / nudot_eigen_convert.coef[
                                                                  0]])
-                        elab = f" [r={r:.2f}]"
+                        elab = f" [r={r:.2f},{r2:.2f}]"
                     left_plot.plot(eigenvalues, e_mjd, label=f'$\\lambda_$({icomp})',
                                    color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
                     left_plot.set_xlabel(r"$\lambda_n$")
                     profile_plot.plot(self.phs[self.onmask], eigenprofile,
                                       color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
                                       label=f"$\\mathbf{{e}}_{icomp}$" + elab)
-                    # left_plot.errorbar(sign*self.eigenvalues_data[icomp], self.mjd, xerr=self.eigenvalue_data_err[icomp],
+                    #left_plot.errorbar(sign*self.eigenvalues[icomp], self.mjd, xerr=self.eigenvalues_err[icomp],
                     #                   ls='None', marker='x', color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
                     profile_plot.plot(self.phs[self.onmask], eigenprofile,
                                       color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
