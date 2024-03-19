@@ -342,269 +342,269 @@ class Celery:
             plt.show()
 
 
-def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(7, 14), pca_comps=(0,),
-                interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile", cmap='rainbow'):
-    if self.nudot_val is None:
-        show_nudot = False
-    if self.eigenvalues is None and self.eigenvalues_resample is None:
-        show_pca = False
-    if eigenvalue_colors is None:
-        eigenvalue_colors = [(0.00392156862745098, 0.45098039215686275, 0.6980392156862745),
-                             (0.8705882352941177, 0.5607843137254902, 0.0196078431372549),
-                             (0.00784313725490196, 0.6196078431372549, 0.45098039215686275),
-                             (0.8352941176470589, 0.3686274509803922, 0.0),
-                             (0.8, 0.47058823529411764, 0.7372549019607844),
-                             (0.792156862745098, 0.5686274509803921, 0.3803921568627451),
-                             (0.984313725490196, 0.6862745098039216, 0.8941176470588236),
-                             (0.5803921568627451, 0.5803921568627451, 0.5803921568627451),
-                             (0.9254901960784314, 0.8823529411764706, 0.2),
-                             (0.33725490196078434, 0.7058823529411765, 0.9137254901960784)]
-    threecolumn = show_nudot or show_pca  # we use a three column layout
+    def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(7, 14), pca_comps=(0,),
+                    interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile", cmap='rainbow'):
+        if self.nudot_val is None:
+            show_nudot = False
+        if self.eigenvalues is None and self.eigenvalues_resample is None:
+            show_pca = False
+        if eigenvalue_colors is None:
+            eigenvalue_colors = [(0.00392156862745098, 0.45098039215686275, 0.6980392156862745),
+                                 (0.8705882352941177, 0.5607843137254902, 0.0196078431372549),
+                                 (0.00784313725490196, 0.6196078431372549, 0.45098039215686275),
+                                 (0.8352941176470589, 0.3686274509803922, 0.0),
+                                 (0.8, 0.47058823529411764, 0.7372549019607844),
+                                 (0.792156862745098, 0.5686274509803921, 0.3803921568627451),
+                                 (0.984313725490196, 0.6862745098039216, 0.8941176470588236),
+                                 (0.5803921568627451, 0.5803921568627451, 0.5803921568627451),
+                                 (0.9254901960784314, 0.8823529411764706, 0.2),
+                                 (0.33725490196078434, 0.7058823529411765, 0.9137254901960784)]
+        threecolumn = show_nudot or show_pca  # we use a three column layout
 
-    def translate_phase(phase):
-        return 360 * (phase - 0.5)
+        def translate_phase(phase):
+            return 360 * (phase - 0.5)
 
-    nsub, nbin = self.data.shape
+        nsub, nbin = self.data.shape
 
-    model_profiles = np.reshape(self.pred_mean_resample, (self.number_output_days, -1))
-    model_profile_std = np.reshape(self.pred_std_resample, (self.number_output_days, -1))
-    model_profiles_at_data = np.reshape(self.pred_mean, (nsub, -1))
+        model_profiles = np.reshape(self.pred_mean_resample, (self.number_output_days, -1))
+        model_profile_std = np.reshape(self.pred_std_resample, (self.number_output_days, -1))
+        model_profiles_at_data = np.reshape(self.pred_mean, (nsub, -1))
 
-    plt.rcParams.update({'font.size': 12})
-    plt.rcParams.update({'font.family': 'serif'})
-    sigma = np.abs(model_profiles / model_profile_std)
+        plt.rcParams.update({'font.size': 12})
+        plt.rcParams.update({'font.family': 'serif'})
+        sigma = np.abs(model_profiles / model_profile_std)
 
-    vm = np.amax(np.abs(model_profiles))
+        vm = np.amax(np.abs(model_profiles))
 
-    extent = (
-        translate_phase(self.phs[self.onmask][0]), translate_phase(self.phs[self.onmask][-1]), self.mjd[0],
-        self.mjd[-1])
-    kvals = self.kernel_values
-    _, outphs = kvals.shape
-    kvals = np.roll(kvals, outphs // 2, 1)
-    kvals = np.vstack((np.flip(kvals, axis=0), kvals))
-    dp = translate_phase(self.phs[1]) - translate_phase(self.phs[0])
-    ds = np.reshape(self.x_resampled, (self.number_output_days, -1))[1, 0]
-    height_ratio = 4
+        extent = (
+            translate_phase(self.phs[self.onmask][0]), translate_phase(self.phs[self.onmask][-1]), self.mjd[0],
+            self.mjd[-1])
+        kvals = self.kernel_values
+        _, outphs = kvals.shape
+        kvals = np.roll(kvals, outphs // 2, 1)
+        kvals = np.vstack((np.flip(kvals, axis=0), kvals))
+        dp = translate_phase(self.phs[1]) - translate_phase(self.phs[0])
+        ds = np.reshape(self.x_resampled, (self.number_output_days, -1))[1, 0]
+        height_ratio = 4
 
-    alpha = np.ones_like(model_profiles)
-    alpha[sigma < 3] = scipy.special.erf(sigma[sigma < 3] / 2)
+        alpha = np.ones_like(model_profiles)
+        alpha[sigma < 3] = scipy.special.erf(sigma[sigma < 3] / 2)
 
-    if threecolumn:
-        width_ratio = 4
-        fig, ((top_left_plot, profile_plot, kernel_plot),
-              (left_plot, main_plot, err_plot)) = plt.subplots(2, 3,
-                                                               facecolor='white',
-                                                               gridspec_kw={
-                                                                   'width_ratios': [1, 3, 3 / width_ratio],
-                                                                   'height_ratios': [1, height_ratio],
-                                                                   'wspace': 0.02},
-                                                               figsize=figsize)
-        fig.delaxes(top_left_plot)  # we don't use this one right now
-
-    else:
-        width_ratio = 3
-        fig, ((profile_plot, kernel_plot),
-              (main_plot, err_plot)) = plt.subplots(2, 2, facecolor='white',
-                                                    gridspec_kw={'width_ratios': [3, 3 / width_ratio],
-                                                                 'height_ratios': [1, height_ratio],
-                                                                 'wspace': 0.02},
-                                                    figsize=figsize)
-
-    # MAIN RAINBOW PLOT
-    # main_plot.set_title("GP Model")
-    main_plot.imshow(model_profiles, aspect='auto', origin='lower', interpolation=interpolation, cmap=cmap,
-                     alpha=alpha, extent=extent, vmin=-vm, vmax=vm)
-    main_plot.set_xlabel("Phase (deg)")
-
-    if threecolumn:
-        # no y labels as they are on the left panel.
-        main_plot.yaxis.set_tick_params(labelleft=False, labelright=False, right=True, left=True, direction='in')
-    else:
-        main_plot.set_ylabel("MJD")
-
-    main_plot.set_ylim(extent[2], extent[3])
-    main_plot.set_xlim(extent[0], extent[1])
-
-    for mjd in self.mjd:
-        main_plot.axhline(mjd, 0, 0.02, ls='-', color='gray', alpha=0.5)
         if threecolumn:
-            left_plot.axhline(mjd, 0.95, 1.0, ls='-', color='gray', alpha=0.5)
-    err = np.mean(model_profile_std, axis=1)
-    err_plot.plot(err, self.mjd_resampled + self.mjd[0], color='k', alpha=0.5)
-    err_plot.plot(-err, self.mjd_resampled + self.mjd[0], color='k', alpha=0.5)
-    err_plot.plot(2 * err, self.mjd_resampled + self.mjd[0], color='k', ls=':',
-                  alpha=0.5)
-    err_plot.plot(-2 * err, self.mjd_resampled + self.mjd[0], color='k', ls=':',
-                  alpha=0.5)
-    err_plot.set_ylim(extent[2], extent[3])
-    err_plot.set_xlabel("Signal (peak flux)")
+            width_ratio = 4
+            fig, ((top_left_plot, profile_plot, kernel_plot),
+                  (left_plot, main_plot, err_plot)) = plt.subplots(2, 3,
+                                                                   facecolor='white',
+                                                                   gridspec_kw={
+                                                                       'width_ratios': [1, 3, 3 / width_ratio],
+                                                                       'height_ratios': [1, height_ratio],
+                                                                       'wspace': 0.02},
+                                                                   figsize=figsize)
+            fig.delaxes(top_left_plot)  # we don't use this one right now
 
-    a1data = np.tile(np.linspace(-vm, vm, 256), self.number_output_days).reshape(self.number_output_days, -1)
+        else:
+            width_ratio = 3
+            fig, ((profile_plot, kernel_plot),
+                  (main_plot, err_plot)) = plt.subplots(2, 2, facecolor='white',
+                                                        gridspec_kw={'width_ratios': [3, 3 / width_ratio],
+                                                                     'height_ratios': [1, height_ratio],
+                                                                     'wspace': 0.02},
+                                                        figsize=figsize)
 
-    a1sigma = np.abs(a1data.T / err).T
-    a1alpha = np.ones_like(a1data)
-    a1alpha[a1sigma < 3] = scipy.special.erf(a1sigma[a1sigma < 3] / 2)
+        # MAIN RAINBOW PLOT
+        # main_plot.set_title("GP Model")
+        main_plot.imshow(model_profiles, aspect='auto', origin='lower', interpolation=interpolation, cmap=cmap,
+                         alpha=alpha, extent=extent, vmin=-vm, vmax=vm)
+        main_plot.set_xlabel("Phase (deg)")
 
-    # err_plot.set_title("Uncertainty & Colour scale")
+        if threecolumn:
+            # no y labels as they are on the left panel.
+            main_plot.yaxis.set_tick_params(labelleft=False, labelright=False, right=True, left=True, direction='in')
+        else:
+            main_plot.set_ylabel("MJD")
 
-    err_plot.imshow(a1data, cmap=cmap, aspect='auto', extent=(-vm, vm, extent[2], extent[3]),
-                    alpha=a1alpha,
-                    interpolation=interpolation, origin='lower')
+        main_plot.set_ylim(extent[2], extent[3])
+        main_plot.set_xlim(extent[0], extent[1])
 
-    err_plot.yaxis.set_label_position("right")
-    err_plot.yaxis.set_tick_params(labelleft=False, labelright=True, right=True, left=False, direction='in')
-    err_plot.tick_params(axis='y', labelrotation=-50, direction='inout')
+        for mjd in self.mjd:
+            main_plot.axhline(mjd, 0, 0.02, ls='-', color='gray', alpha=0.5)
+            if threecolumn:
+                left_plot.axhline(mjd, 0.95, 1.0, ls='-', color='gray', alpha=0.5)
+        err = np.mean(model_profile_std, axis=1)
+        err_plot.plot(err, self.mjd_resampled + self.mjd[0], color='k', alpha=0.5)
+        err_plot.plot(-err, self.mjd_resampled + self.mjd[0], color='k', alpha=0.5)
+        err_plot.plot(2 * err, self.mjd_resampled + self.mjd[0], color='k', ls=':',
+                      alpha=0.5)
+        err_plot.plot(-2 * err, self.mjd_resampled + self.mjd[0], color='k', ls=':',
+                      alpha=0.5)
+        err_plot.set_ylim(extent[2], extent[3])
+        err_plot.set_xlabel("Signal (peak flux)")
 
-    err_plot.set_ylabel("MJD")
-    err_plot.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+        a1data = np.tile(np.linspace(-vm, vm, 256), self.number_output_days).reshape(self.number_output_days, -1)
 
-    # Find phase with most variation
-    most_variable_phase_bin = np.argmax(np.std(model_profiles, axis=0))
+        a1sigma = np.abs(a1data.T / err).T
+        a1alpha = np.ones_like(a1data)
+        a1alpha[a1sigma < 3] = scipy.special.erf(a1sigma[a1sigma < 3] / 2)
 
-    lowprof = model_profiles_at_data[:, most_variable_phase_bin] < -0.01
-    hiprof = model_profiles_at_data[:, most_variable_phase_bin] > 0.01
+        # err_plot.set_title("Uncertainty & Colour scale")
 
-    if not show_pca:
-        profile_plot.plot(self.phs[self.onmask], np.mean(self.data[lowprof][:, self.onmask], axis=0), color='b',
-                          alpha=0.5, label='low')
-        profile_plot.plot(self.phs[self.onmask], np.mean(self.data[hiprof][:, self.onmask], axis=0), color='r',
-                          alpha=0.5, label='high')
+        err_plot.imshow(a1data, cmap=cmap, aspect='auto', extent=(-vm, vm, extent[2], extent[3]),
+                        alpha=a1alpha,
+                        interpolation=interpolation, origin='lower')
 
-    profile_plot.axhline(0, color='gray')
-    profile_plot.plot(translate_phase(self.phs[self.onmask]), self.avgprof[self.onmask], color='k', lw=2,
-                      label='Median\nProfile')
-    profile_plot.axvline(translate_phase(self.phs[self.onmask][most_variable_phase_bin]), color='gray', ls='--',
-                         alpha=0.4,
-                         label='MVP')
+        err_plot.yaxis.set_label_position("right")
+        err_plot.yaxis.set_tick_params(labelleft=False, labelright=True, right=True, left=False, direction='in')
+        err_plot.tick_params(axis='y', labelrotation=-50, direction='inout')
 
-    profile_plot.set_xlim(extent[0], extent[1])
-    profile_plot.set_xlabel("Phase (deg)")
-    # profile_plot.set_ylabel("Amplitude")
-    profile_plot.set_title(title)
+        err_plot.set_ylabel("MJD")
+        err_plot.xaxis.set_major_formatter(FormatStrFormatter('%g'))
 
-    kernel_plot.set_title("Kernel")
-    kernel_plot.imshow(kvals, aspect='auto', origin='lower',
-                       extent=(-outphs * dp / 2, outphs * dp / 2, -self.number_output_days * ds,
-                               self.number_output_days * ds), cmap='Greys')
-    kernel_plot.set_xlabel("Phase Lag")
-    kernel_plot.set_ylabel("Time Lag (days)")
+        # Find phase with most variation
+        most_variable_phase_bin = np.argmax(np.std(model_profiles, axis=0))
 
-    kernel_plot.yaxis.set_label_position("right")
-    kernel_plot.yaxis.set_tick_params(labelleft=False, labelright=True, right=True, left=False, direction='in')
+        lowprof = model_profiles_at_data[:, most_variable_phase_bin] < -0.01
+        hiprof = model_profiles_at_data[:, most_variable_phase_bin] > 0.01
 
-    rx = (extent[1] - extent[0]) / width_ratio / 2
-    ry = (extent[3] - extent[2]) / height_ratio / 2
+        if not show_pca:
+            profile_plot.plot(self.phs[self.onmask], np.mean(self.data[lowprof][:, self.onmask], axis=0), color='b',
+                              alpha=0.5, label='low')
+            profile_plot.plot(self.phs[self.onmask], np.mean(self.data[hiprof][:, self.onmask], axis=0), color='r',
+                              alpha=0.5, label='high')
 
-    #     kernel_plot.set_yticks([])
-    kernel_plot.set_xlim(-rx, rx)
-    kernel_plot.set_ylim(-ry, ry)
-    kernel_plot.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+        profile_plot.axhline(0, color='gray')
+        profile_plot.plot(translate_phase(self.phs[self.onmask]), self.avgprof[self.onmask], color='k', lw=2,
+                          label='Median\nProfile')
+        profile_plot.axvline(translate_phase(self.phs[self.onmask][most_variable_phase_bin]), color='gray', ls='--',
+                             alpha=0.4,
+                             label='MVP')
 
-    if threecolumn:
-        left_plot.set_ylabel("MJD")
-        left_plot.tick_params(axis='y', labelrotation=50, direction='inout')
-        left_plot.set_ylim(extent[2], extent[3])
-        left_plot.yaxis.set_tick_params(labelleft=True, labelright=False, right=True, left=True, direction='in')
-        left_plot.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+        profile_plot.set_xlim(extent[0], extent[1])
+        profile_plot.set_xlabel("Phase (deg)")
+        # profile_plot.set_ylabel("Amplitude")
+        profile_plot.set_title(title)
 
-        if show_pca:
-            for icomp in pca_comps:
-                if self.eigenvalues_resample is not None:
-                    eigenvalues = self.eigenvalues_resample[icomp]
-                    eigenprofile = self.eigenprofiles_resample[icomp]
-                    eigenvalues_err = None if self.eigenvalues_resample_err is None else \
-                        self.eigenvalues_resample_err[icomp]
-                    e_mjd = self.mjd_resampled + self.mjd[0]
-                else:
-                    eigenvalues = self.eigenvalues[icomp]
-                    eigenprofile = self.eigenprofiles[icomp]
-                    eigenvalues_err = None if self.eigenvalues_err is None else self.eigenvalues_err[icomp]
-                    e_mjd = self.mjd
-                elab = ""
-                if show_nudot:
-                    nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
-                                              self.nudot_val)
-                    r2, _ = scipy.stats.pearsonr(self.eigenvalues[icomp], nudot_resamp2)
+        kernel_plot.set_title("Kernel")
+        kernel_plot.imshow(kvals, aspect='auto', origin='lower',
+                           extent=(-outphs * dp / 2, outphs * dp / 2, -self.number_output_days * ds,
+                                   self.number_output_days * ds), cmap='Greys')
+        kernel_plot.set_xlabel("Phase Lag")
+        kernel_plot.set_ylabel("Time Lag (days)")
 
-                    nudot_resamp = np.interp(self.mjd_resampled + self.mjd[0], self.nudot_mjd,
-                                             self.nudot_val)
-                    r, _ = scipy.stats.pearsonr(eigenvalues, nudot_resamp)
-                    sign = 1
-                    if r < 0:
-                        eigenprofile *= -1
-                        eigenvalues *= -1
-                        sign = -1
+        kernel_plot.yaxis.set_label_position("right")
+        kernel_plot.yaxis.set_tick_params(labelleft=False, labelright=True, right=True, left=False, direction='in')
+
+        rx = (extent[1] - extent[0]) / width_ratio / 2
+        ry = (extent[3] - extent[2]) / height_ratio / 2
+
+        #     kernel_plot.set_yticks([])
+        kernel_plot.set_xlim(-rx, rx)
+        kernel_plot.set_ylim(-ry, ry)
+        kernel_plot.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+
+        if threecolumn:
+            left_plot.set_ylabel("MJD")
+            left_plot.tick_params(axis='y', labelrotation=50, direction='inout')
+            left_plot.set_ylim(extent[2], extent[3])
+            left_plot.yaxis.set_tick_params(labelleft=True, labelright=False, right=True, left=True, direction='in')
+            left_plot.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+
+            if show_pca:
+                for icomp in pca_comps:
+                    if self.eigenvalues_resample is not None:
+                        eigenvalues = self.eigenvalues_resample[icomp]
+                        eigenprofile = self.eigenprofiles_resample[icomp]
+                        eigenvalues_err = None if self.eigenvalues_resample_err is None else \
+                            self.eigenvalues_resample_err[icomp]
+                        e_mjd = self.mjd_resampled + self.mjd[0]
+                    else:
+                        eigenvalues = self.eigenvalues[icomp]
+                        eigenprofile = self.eigenprofiles[icomp]
+                        eigenvalues_err = None if self.eigenvalues_err is None else self.eigenvalues_err[icomp]
+                        e_mjd = self.mjd
+                    elab = ""
+                    if show_nudot:
+                        nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
+                                                  self.nudot_val)
+                        r2, _ = scipy.stats.pearsonr(self.eigenvalues[icomp], nudot_resamp2)
+
+                        nudot_resamp = np.interp(self.mjd_resampled + self.mjd[0], self.nudot_mjd,
+                                                 self.nudot_val)
+                        r, _ = scipy.stats.pearsonr(eigenvalues, nudot_resamp)
+                        sign = 1
+                        if r < 0:
+                            eigenprofile *= -1
+                            eigenvalues *= -1
+                            sign = -1
+                        if icomp == pca_comps[0]:
+                            nudot_eigen_convert = np.poly1d(np.polyfit(eigenvalues, nudot_resamp, 1))
+                            eigen_nudot_convert = np.poly1d([1 / nudot_eigen_convert.coef[0],
+                                                             -nudot_eigen_convert.coef[1] / nudot_eigen_convert.coef[
+                                                                 0]])
+                        elab = f" [r={r:.2f},{r2:.2f}]"
+                    left_plot.plot(eigenvalues, e_mjd, label=f'$\\lambda_$({icomp})',
+                                   color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
+                    left_plot.set_xlabel(r"$\lambda_n$")
+                    profile_plot.plot(translate_phase(self.phs[self.onmask]), eigenprofile,
+                                      color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
+                                      label=f"$\\mathbf{{e}}_{icomp}$" + elab)
+                    # left_plot.errorbar(sign*self.eigenvalues[icomp], self.mjd, xerr=self.eigenvalues_err[icomp],
+                    #                   ls='None', marker='x', color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
+                    #                 profile_plot.plot(self.phs[self.onmask], eigenprofile,
+                    #                                   color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
+                    #                                   label=f"$\\mathbf{{e}}_{icomp}$")
+                    if eigenvalues_err is not None:
+                        left_plot.fill_betweenx(e_mjd, eigenvalues - eigenvalues_err, eigenvalues + eigenvalues_err,
+                                                alpha=0.5, color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
                     if icomp == pca_comps[0]:
-                        nudot_eigen_convert = np.poly1d(np.polyfit(eigenvalues, nudot_resamp, 1))
-                        eigen_nudot_convert = np.poly1d([1 / nudot_eigen_convert.coef[0],
-                                                         -nudot_eigen_convert.coef[1] / nudot_eigen_convert.coef[
-                                                             0]])
-                    elab = f" [r={r:.2f},{r2:.2f}]"
-                left_plot.plot(eigenvalues, e_mjd, label=f'$\\lambda_$({icomp})',
-                               color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
-                left_plot.set_xlabel(r"$\lambda_n$")
-                profile_plot.plot(translate_phase(self.phs[self.onmask]), eigenprofile,
-                                  color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
-                                  label=f"$\\mathbf{{e}}_{icomp}$" + elab)
-                # left_plot.errorbar(sign*self.eigenvalues[icomp], self.mjd, xerr=self.eigenvalues_err[icomp],
-                #                   ls='None', marker='x', color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
-                #                 profile_plot.plot(self.phs[self.onmask], eigenprofile,
-                #                                   color=eigenvalue_colors[icomp % len(eigenvalue_colors)],
-                #                                   label=f"$\\mathbf{{e}}_{icomp}$")
-                if eigenvalues_err is not None:
-                    left_plot.fill_betweenx(e_mjd, eigenvalues - eigenvalues_err, eigenvalues + eigenvalues_err,
-                                            alpha=0.5, color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
-                if icomp == pca_comps[0]:
-                    proflo = self.avgprof[self.onmask] + eigenprofile * np.amin(eigenvalues)
-                    profhi = self.avgprof[self.onmask] + eigenprofile * np.amax(eigenvalues)
-                    profile_plot.plot(translate_phase(self.phs[self.onmask]), proflo, color='b', alpha=0.5,
-                                      label=f"$+\\lambda_{{min}}\\mathbf{{e}}_{icomp}$")
-                    profile_plot.plot(translate_phase(self.phs[self.onmask]), profhi, color='r', alpha=0.5,
-                                      label=f"$+\\lambda_{{max}}\\mathbf{{e}}_{icomp}$")
-        if show_nudot:
-            ax_nudot = left_plot.twiny()
-            ax_nudot.set_xlabel(r"$\dot{\nu}$ $(10^{-15}\mathrm{Hz^2})$")
-            ax_nudot.plot(self.nudot_val, self.nudot_mjd, color='k', ls='--')
-            if self.nudot_err is not None:
-                ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val - self.nudot_err,
-                                       self.nudot_val + self.nudot_err,
-                                       color='k', alpha=0.3)
-            nudots = self.nudot_val[(self.nudot_mjd > extent[2]) & (self.nudot_mjd < extent[3])]
-            nudot_max = np.amax(nudots)
-            nudot_min = np.amin(nudots)
-            if scale_plots and show_pca:
-                cmax = max(nudot_max, np.amax(nudot_eigen_convert(eigenvalues)))
-                cmin = min(nudot_min, np.amin(nudot_eigen_convert(eigenvalues)))
+                        proflo = self.avgprof[self.onmask] + eigenprofile * np.amin(eigenvalues)
+                        profhi = self.avgprof[self.onmask] + eigenprofile * np.amax(eigenvalues)
+                        profile_plot.plot(translate_phase(self.phs[self.onmask]), proflo, color='b', alpha=0.5,
+                                          label=f"$+\\lambda_{{min}}\\mathbf{{e}}_{icomp}$")
+                        profile_plot.plot(translate_phase(self.phs[self.onmask]), profhi, color='r', alpha=0.5,
+                                          label=f"$+\\lambda_{{max}}\\mathbf{{e}}_{icomp}$")
+            if show_nudot:
+                ax_nudot = left_plot.twiny()
+                ax_nudot.set_xlabel(r"$\dot{\nu}$ $(10^{-15}\mathrm{Hz^2})$")
+                ax_nudot.plot(self.nudot_val, self.nudot_mjd, color='k', ls='--')
+                if self.nudot_err is not None:
+                    ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val - self.nudot_err,
+                                           self.nudot_val + self.nudot_err,
+                                           color='k', alpha=0.3)
+                nudots = self.nudot_val[(self.nudot_mjd > extent[2]) & (self.nudot_mjd < extent[3])]
+                nudot_max = np.amax(nudots)
+                nudot_min = np.amin(nudots)
+                if scale_plots and show_pca:
+                    cmax = max(nudot_max, np.amax(nudot_eigen_convert(eigenvalues)))
+                    cmin = min(nudot_min, np.amin(nudot_eigen_convert(eigenvalues)))
 
-                rng = cmax - cmin
-                cmax += 0.1 * rng
-                cmin -= 0.1 * rng
-                ax_nudot.set_xlim(cmin, cmax)
-                left_plot.set_xlim(eigen_nudot_convert(cmin), eigen_nudot_convert(cmax))
+                    rng = cmax - cmin
+                    cmax += 0.1 * rng
+                    cmin -= 0.1 * rng
+                    ax_nudot.set_xlim(cmin, cmax)
+                    left_plot.set_xlim(eigen_nudot_convert(cmin), eigen_nudot_convert(cmax))
 
-            else:
-                rng = nudot_max - nudot_min
-                ax_nudot.set_xlim(nudot_min - 0.1 * rng, nudot_max + 0.1 * rng)
+                else:
+                    rng = nudot_max - nudot_min
+                    ax_nudot.set_xlim(nudot_min - 0.1 * rng, nudot_max + 0.1 * rng)
 
-    profile_plot.legend(bbox_to_anchor=(-0.1, 1), loc='upper right', prop={'size': 12})
+        profile_plot.legend(bbox_to_anchor=(-0.1, 1), loc='upper right', prop={'size': 12})
 
-    bbox = kernel_plot.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    width1, height1 = bbox.width, bbox.height
-    pwidth1 = kernel_plot.get_xlim()[1] - kernel_plot.get_xlim()[0]
-    pheight1 = kernel_plot.get_ylim()[1] - kernel_plot.get_ylim()[0]
+        bbox = kernel_plot.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+        width1, height1 = bbox.width, bbox.height
+        pwidth1 = kernel_plot.get_xlim()[1] - kernel_plot.get_xlim()[0]
+        pheight1 = kernel_plot.get_ylim()[1] - kernel_plot.get_ylim()[0]
 
-    bbox = main_plot.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+        bbox = main_plot.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
 
-    width2, height2 = bbox.width, bbox.height
-    pwidth2 = main_plot.get_xlim()[1] - main_plot.get_xlim()[0]
-    pheight2 = main_plot.get_ylim()[1] - main_plot.get_ylim()[0]
-    rwidth = (pwidth2 / width2) / (pwidth1 / width1)
-    rheight = (pheight2 / height2) / (pheight1 / height1)
-    if rwidth != 1.0 or rheight != 1.0:
-        print("Notice Kernel scale wrong:", rwidth, rheight)
+        width2, height2 = bbox.width, bbox.height
+        pwidth2 = main_plot.get_xlim()[1] - main_plot.get_xlim()[0]
+        pheight2 = main_plot.get_ylim()[1] - main_plot.get_ylim()[0]
+        rwidth = (pwidth2 / width2) / (pwidth1 / width1)
+        rheight = (pheight2 / height2) / (pheight1 / height1)
+        if rwidth != 1.0 or rheight != 1.0:
+            print("Notice Kernel scale wrong:", rwidth, rheight)
 
-    if not (outname is None):
-        plt.savefig(outname, bbox_inches='tight')
-    else:
-        plt.show()
+        if not (outname is None):
+            plt.savefig(outname, bbox_inches='tight')
+        else:
+            plt.show()
