@@ -343,7 +343,8 @@ class Celery:
 
 
     def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(7, 14), pca_comps=(0,),
-                    interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile", cmap='rainbow'):
+                    interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile", cmap='rainbow',
+                    glitches=[]):
         if self.nudot_val is None:
             show_nudot = False
         if self.eigenvalues is None and self.eigenvalues_resample is None:
@@ -507,7 +508,8 @@ class Celery:
             left_plot.set_ylim(extent[2], extent[3])
             left_plot.yaxis.set_tick_params(labelleft=True, labelright=False, right=True, left=True, direction='in')
             left_plot.xaxis.set_major_formatter(FormatStrFormatter('%g'))
-
+            for glitch in glitches:
+                left_plot.axhline(glitch,color='salmon',ls='--')
             if show_pca:
                 for icomp in pca_comps:
                     if self.eigenvalues_resample is not None:
@@ -540,7 +542,8 @@ class Celery:
                             eigen_nudot_convert = np.poly1d([1 / nudot_eigen_convert.coef[0],
                                                              -nudot_eigen_convert.coef[1] / nudot_eigen_convert.coef[
                                                                  0]])
-                        elab = f" [r={r:.2f},{r2:.2f}]"
+                        #elab = f" [r={r:.2f},{r2:.2f}]"
+                        elab = f" [r={r2:.2f}]"
                     left_plot.plot(eigenvalues, e_mjd, label=f'$\\lambda_$({icomp})',
                                    color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
                     left_plot.set_xlabel(r"$\lambda_n$")
