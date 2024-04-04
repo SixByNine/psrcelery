@@ -3,7 +3,7 @@ import scipy.optimize as opt
 import scipy.stats
 
 
-def align_and_scale(data, template, nharm=None):
+def align_and_scale(data, template, nharm=None,max_ishift=None):
     if nharm == "auto":
         power_template = np.absolute(np.fft.rfft(template)) ** 2
         k = (np.arange(len(power_template)) + 1)
@@ -13,10 +13,10 @@ def align_and_scale(data, template, nharm=None):
         t = np.argmax(prob > 0.99)
         nharm = len(power_template) - t
 
-    return np.apply_along_axis(align_and_scale_one, 1, data, template=template, nharm=nharm)
+    return np.apply_along_axis(align_and_scale_one, 1, data, template=template, nharm=nharm,max_ishift=max_ishift)
 
 
-def align_and_scale_one(prof, template, nharm=None):
+def align_and_scale_one(prof, template, nharm=None,max_ishift=None):
     # Equation A7 in Taylor 1992
     def get_dchi(tau, N, nbin):
         dphi = np.angle(xspec)[1:N]
@@ -62,7 +62,8 @@ def align_and_scale_one(prof, template, nharm=None):
     xcor = np.fft.irfft(xspec)  # Cross correlation
 
     ishift = np.argmax(np.abs(xcor))  # estimate of the shift directly from the peak cross-correlation
-
+    if max_ishift is not None:
+        ishift = np.argmax(np.abs(xcor[:max_ishift]))
     # We need to define some bounds to search. (Actually this might not be optimal)
     for window in (np.arange(nbin // 4) + 1):
         lo = ishift - window
