@@ -143,7 +143,7 @@ class Celery:
         if matern:
             CustomTerm = terms.make_custom_profile_term(phase_kernels.GaussianPhaseKernel(nc),
                                                         celerite.terms.Matern32Term)
-            celkern = CustomTerm(log_sigma=-4, log10_width=log_min_width, log_rho=np.log(100),
+            celkern = CustomTerm(log_sigma=-4, log10_width=log_min_width, log_rho=np.log(0.5*(max_length+min_length)),
                                  bounds={'log_sigma': (min_lnamp / 2, max_lnamp / 2),
                                          'log10_width': (log_min_width, -0.5),
                                          'log_rho': (np.log(min_length), np.log(max_length))})
@@ -153,7 +153,7 @@ class Celery:
                             'log10_length': (np.log10(min_length), np.log10(max_length))}
             celkern = terms.SimpleProfileTerm(log_amp=-8,
                                               log10_width=log_min_width,
-                                              log10_length=3,
+                                              log10_length=np.log(0.5*(max_length+min_length)),
                                               ncoef=nc,
                                               bounds=prior_bounds)
 
