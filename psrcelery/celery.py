@@ -153,7 +153,7 @@ class Celery:
                             'log10_length': (np.log10(min_length), np.log10(max_length))}
             celkern = terms.SimpleProfileTerm(log_amp=-8,
                                               log10_width=log_min_width,
-                                              log10_length=np.log(0.5*(max_length+min_length)),
+                                              log10_length=np.log10(0.5*(max_length+min_length)),
                                               ncoef=nc,
                                               bounds=prior_bounds)
 
@@ -344,7 +344,7 @@ class Celery:
 
     def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(7, 14), pca_comps=(0,),
                     interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile", cmap='rainbow',
-                    glitches=[]):
+                    glitches=[],nudot_bounds=None):
         if self.nudot_val is None:
             show_nudot = False
         if self.eigenvalues is None and self.eigenvalues_resample is None:
@@ -513,17 +513,23 @@ class Celery:
             if show_pca:
                 for icomp in pca_comps:
                     if self.eigenvalues_resample is not None:
-                        eigenvalues = self.eigenvalues_resample[icomp]
-                        eigenprofile = self.eigenprofiles_resample[icomp]
+                        eigenvalues = self.eigenvalues_resample[icomp].copy()
+                        eigenprofile = self.eigenprofiles_resample[icomp].copy()
                         eigenvalues_err = None if self.eigenvalues_resample_err is None else \
                             self.eigenvalues_resample_err[icomp]
                         e_mjd = self.mjd_resampled + self.mjd[0]
                     else:
-                        eigenvalues = self.eigenvalues[icomp]
-                        eigenprofile = self.eigenprofiles[icomp]
+                        eigenvalues = self.eigenvalues[icomp].copy()
+                        eigenprofile = self.eigenprofiles[icomp].copy()
                         eigenvalues_err = None if self.eigenvalues_err is None else self.eigenvalues_err[icomp]
                         e_mjd = self.mjd
                     elab = ""
+                    if self.eigenprofiles is not None and np.sum(eigenprofile * self.eigenprofiles[icomp]) < 0:
+                        # We have accidently inverted one set of eigenprofiles
+                        # This was a bug in early codes.
+                        print("Note eigenprofiles have been sign corrected for consistency.")
+                        eigenprofile *=-1
+                        eigenvalues *= -1
                     if show_nudot:
                         nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
                                                   self.nudot_val)
@@ -532,11 +538,11 @@ class Celery:
                         nudot_resamp = np.interp(self.mjd_resampled + self.mjd[0], self.nudot_mjd,
                                                  self.nudot_val)
                         r, _ = scipy.stats.pearsonr(eigenvalues, nudot_resamp)
-                        sign = 1
-                        if r < 0:
+                        if r2 < 0:
                             eigenprofile *= -1
                             eigenvalues *= -1
-                            sign = -1
+                            r2*=-1
+                            r*=-1
                         if icomp == pca_comps[0]:
                             nudot_eigen_convert = np.poly1d(np.polyfit(eigenvalues, nudot_resamp, 1))
                             eigen_nudot_convert = np.poly1d([1 / nudot_eigen_convert.coef[0],
@@ -574,8 +580,11 @@ class Celery:
                                            self.nudot_val + self.nudot_err,
                                            color='k', alpha=0.3)
                 nudots = self.nudot_val[(self.nudot_mjd > extent[2]) & (self.nudot_mjd < extent[3])]
-                nudot_max = np.amax(nudots)
-                nudot_min = np.amin(nudots)
+                if nudot_bounds is None:
+                    nudot_max = np.amax(nudots)
+                    nudot_min = np.amin(nudots)
+                else:
+                    nudot_min,nudot_max = nudot_bounds
                 if scale_plots and show_pca:
                     cmax = max(nudot_max, np.amax(nudot_eigen_convert(eigenvalues)))
                     cmin = min(nudot_min, np.amin(nudot_eigen_convert(eigenvalues)))
