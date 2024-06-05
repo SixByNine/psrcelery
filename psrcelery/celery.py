@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 import scipy.stats
 from psrcelery import terms, phase_kernels, celery_threads
 import pickle
-
+import dill
 from matplotlib.ticker import FormatStrFormatter
 
 
@@ -59,6 +59,7 @@ class Celery:
         self.offmask = None
         self.onmask = None
         self.cel_gp = None
+        self.cel_gp_pack = None
         self.data = data
         self.mjd = mjd
         self.rounded_mjd_factor = 1
@@ -146,7 +147,7 @@ class Celery:
             celkern = CustomTerm(log_sigma=-4, log10_width=log_min_width, log_rho=np.log(0.5*(max_length+min_length)),
                                  bounds={'log_sigma': (min_lnamp / 2, max_lnamp / 2),
                                          'log10_width': (log_min_width, -0.5),
-                                         'log_rho': (np.log(min_length), np.log(max_length))})
+                                         'log_rho': (np.log(min_length), np.log(max_length))},eps=1e-5)
 
         else:
             prior_bounds = {'log_amp': (min_lnamp, max_lnamp), 'log10_width': (log_min_width, -0.5),
@@ -192,7 +193,7 @@ class Celery:
         pred_block_cov = np.zeros((nprof, nbin, nbin))
         if nthread > 1:
             with multiprocessing.Pool(nthread, initializer=celery_threads.init,
-                                      initargs=(self.cel_gp, xstack, self.y)) as pool:
+                                      initargs=(dill.dumps(self.cel_gp), xstack, self.y)) as pool:
                 ret = pool.map(celery_threads.run, range(len(xstack)))
                 for i, x in enumerate(xstack):
                     pred_y[i], pred_yerr[i], pred_block_cov[i] = ret[i]
@@ -287,6 +288,7 @@ class Celery:
             pca = sklearn.decomposition.PCA(n_components=10)
             eigenvalues = pca.fit_transform(data).T
             eigenprofiles = pca.components_
+            self.pca_explained_variance = pca.explained_variance_ratio_
             return eigenvalues, eigenprofiles
 
         if self.pred_mean_resample is not None:
@@ -316,6 +318,7 @@ class Celery:
                     self.eigenvalues_err.append(np.sqrt(
                         c.T.dot(self.pred_block_cov).dot(c)))
 
+
     def dampen_edges(self, threshold=0.05):
         edge_mask = self.avgprof[self.onmask] < threshold
         self.pred_mean -= np.mean(self.pred_mean[:, edge_mask], axis=1).reshape((-1, 1))
@@ -340,6 +343,11 @@ class Celery:
             plt.savefig(outname)
         else:
             plt.show()
+
+
+
+
+
 
 
     def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(7, 14), pca_comps=(0,),
@@ -411,6 +419,7 @@ class Celery:
                                                                      'height_ratios': [1, height_ratio],
                                                                      'wspace': 0.02},
                                                         figsize=figsize)
+
 
         # MAIN RAINBOW PLOT
         # main_plot.set_title("GP Model")
@@ -534,10 +543,11 @@ class Celery:
                         nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
                                                   self.nudot_val)
                         r2, _ = scipy.stats.pearsonr(self.eigenvalues[icomp], nudot_resamp2)
-
+                        #r2, _ = scipy.stats.spearmanr(self.eigenvalues[icomp], nudot_resamp2)
                         nudot_resamp = np.interp(self.mjd_resampled + self.mjd[0], self.nudot_mjd,
                                                  self.nudot_val)
                         r, _ = scipy.stats.pearsonr(eigenvalues, nudot_resamp)
+                        #r, _ = scipy.stats.spearmanr(eigenvalues, nudot_resamp)
                         if r2 < 0:
                             eigenprofile *= -1
                             eigenvalues *= -1
@@ -550,6 +560,7 @@ class Celery:
                                                                  0]])
                         #elab = f" [r={r:.2f},{r2:.2f}]"
                         elab = f" [r={r2:.2f}]"
+                        elab = ""
                     left_plot.plot(eigenvalues, e_mjd, label=f'$\\lambda_$({icomp})',
                                    color=eigenvalue_colors[icomp % len(eigenvalue_colors)])
                     left_plot.set_xlabel(r"$\lambda_n$")
@@ -620,3 +631,56 @@ class Celery:
             plt.savefig(outname, bbox_inches='tight')
         else:
             plt.show()
+
+    def piecewise_pca_analysis(self, bounds):
+        def run_pca(data):
+            pca = sklearn.decomposition.PCA(n_components=3)
+            data -= np.median(data, axis=0)
+            eigenvalues = pca.fit_transform(data).T
+            eigenprofiles = pca.components_
+            return eigenvalues, eigenprofiles
+
+        nsub = len(self.mjd)
+        model_profiles_at_data = np.reshape(self.pred_mean, (nsub, -1))
+        _,nout = model_profiles_at_data.shape
+        nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
+                                  self.nudot_val)
+        nudot_resamp2 -= np.mean(nudot_resamp2)
+        model_profiles = np.reshape(self.pred_mean_resample, (self.number_output_days, -1))
+        mjd = self.mjd_resampled + self.mjd[0]
+        chunks = []
+        for i, bound in enumerate(bounds):
+            mask = (mjd > bound[0]) & (mjd <= bound[1])
+            mask_at_data = (self.mjd > bound[0]) & (self.mjd <= bound[1])
+            data_eigenvals,eigenprofiles = run_pca(model_profiles_at_data[mask_at_data])
+            eigenvals = np.dot(eigenprofiles, model_profiles[mask].T)
+            r,_ = scipy.stats.pearsonr(data_eigenvals[0], nudot_resamp2[mask_at_data])
+            if r < 0:
+                eigenvals *= -1
+                eigenprofiles *= -1
+                data_eigenvals *= -1
+                r*=-1
+            dchunk = self.data[mask_at_data][:, self.onmask]
+            chunks.append((mask, bound, eigenvals, eigenprofiles, data_eigenvals,r,dchunk))
+        return chunks
+
+
+    def get_correlation(self,icomp=0):
+        nudot_resamp2 = np.interp(self.mjd, self.nudot_mjd,
+                                  self.nudot_val)
+        pearsonr = scipy.stats.pearsonr(self.eigenvalues[icomp], nudot_resamp2)
+        spearmanr = scipy.stats.spearmanr(self.eigenvalues[icomp], nudot_resamp2)
+        return pearsonr,spearmanr
+
+    def pack_gp(self):
+        """Pack the GP object into a byte array for storage"""
+        print("Pack GP")
+        self.cel_gp_pack = dill.dumps(self.cel_gp)
+        self.cel_gp=None
+
+    def unpack_gp(self):
+        """Unpack the GP object from a byte array"""
+        if self.cel_gp_pack is not None:
+            print("Unpack GP")
+            self.cel_gp = dill.loads(self.cel_gp_pack)
+            self.cel_gp_pack=None

@@ -78,14 +78,28 @@ def make_custom_profile_term(phase_kernel, time_kernel, omega0=2 * np.pi, optimi
     fourier_mask = np.array([k in phase_kernel.parameter_names for k in pnames], dtype=bool)
 
     def extract_time_args(kwargs):
-        return {k: kwargs[k] for k in time_kernel.parameter_names}
+        """
+        Extract the time kernel arguments from the kwargs.
+        """
+        plist1 = set(time_kernel.parameter_names)
+        plist2 = set(time_kernel.__init__.__code__.co_varnames)
+        plist2.discard('self')
+        plist2.discard('kwargs')
+        plist2.discard('args')
+        plist = plist1.union(plist2)
+        retargs = {k: kwargs[k] for k in plist if k in kwargs}
+        for arg in plist2:
+            kwargs.pop(arg)
+
+        return kwargs, retargs
 
     class HalfProfileTerm(celerite.terms.Term):
         parameter_names = pnames
 
         def __init__(self, *args, **kwargs):
+            kwargs,timeargs = extract_time_args(kwargs)
             super(HalfProfileTerm, self).__init__(*args, **kwargs)
-            self.timekernel = time_kernel(**extract_time_args(kwargs))
+            self.timekernel = time_kernel(**timeargs)
 
         def get_real_coefficients(self, params):
             time_params = params[time_mask]
@@ -114,8 +128,9 @@ def make_custom_profile_term(phase_kernel, time_kernel, omega0=2 * np.pi, optimi
         parameter_names = pnames
 
         def __init__(self, *args, **kwargs):
+            kwargs, timeargs = extract_time_args(kwargs)
             super(CmplxProfileTerm, self).__init__(*args, **kwargs)
-            self.timekernel = time_kernel(**extract_time_args(kwargs))
+            self.timekernel = time_kernel(**timeargs)
 
         def get_complex_coefficients(self, params):
             time_params = params[time_mask]
@@ -138,8 +153,9 @@ def make_custom_profile_term(phase_kernel, time_kernel, omega0=2 * np.pi, optimi
         parameter_names = pnames
 
         def __init__(self, *args, **kwargs):
+            kwargs, timeargs = extract_time_args(kwargs)
             super(FullProfileTerm, self).__init__(*args, **kwargs)
-            self.timekernel = time_kernel(**extract_time_args(kwargs))
+            self.timekernel = time_kernel(**timeargs)
 
         def get_real_coefficients(self, params):
             time_params = params[time_mask]

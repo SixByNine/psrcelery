@@ -1,11 +1,12 @@
 import numpy as np
+import dill
 
 def init(_cel_gp,_x,_y):
     global cel_gp
     global x
     global y
     print("init thread")
-    cel_gp = _cel_gp
+    cel_gp = dill.loads(_cel_gp)
     x=_x
     y=_y
 
