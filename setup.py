@@ -8,5 +8,6 @@ setup(
     license='',
     author='Michael Keith',
     author_email='mkeith@pulsarastronomy.net',
-    description=''
+    description='',
+    install_requires=['celerite','numpy','scipy','matplotlib','scikit-learn']
 )
