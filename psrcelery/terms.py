@@ -1,203 +1,221 @@
-import celerite
-import numpy as np
+import jax
+import celerite2.jax
+import jax.numpy as jnp
 
 
-class ExpTerm(celerite.terms.Term):
+class CeleryTerm(celerite2.jax.terms.Term):
+    def __init__(self, parameter_names,bounds):
+        self.nparams=len(parameter_names)
+        self.parameter_names=parameter_names
+        lowbounds=[]
+        hibounds=[]
+        for parameter in parameter_names:
+            lowbounds.append(bounds[parameter][0])
+            hibounds.append(bounds[parameter][1])
+        self.lowbounds=jnp.array(lowbounds)
+        self.hibounds=jnp.array(hibounds)
+        self.param_mask=None
+        self.params=(self.hibounds+self.lowbounds)/2
+    def set_param_mask(self, allparams):
+        self.param_mask = jnp.array([True if param in self.parameter_names else False for param in allparams])
+
+    def set_params(self,params):
+        self.params=params[self.param_mask]
+
+    
+    
+
+
+class Matern32Term(CeleryTerm):
+    def __init__(self,bounds,eps=1e-5):
+        parameter_names = ("log_sigma", "log_rho")
+        super(Matern32Term, self).__init__(parameter_names,bounds)
+        log_sigma, log_rho = self.params
+        sigma = jnp.exp(log_sigma)
+        rho = jnp.exp(log_rho)
+        self.matern=celerite2.jax.terms.Matern32Term(sigma=sigma,rho=rho,eps=eps)
+
+    def get_coefficients(self):
+        log_sigma, log_rho = self.params
+        self.matern.sigma = jnp.exp(log_sigma)
+        self.matern.rho = jnp.exp(log_rho)
+        return self.matern.get_coefficients()
+
+
+class ExpTerm(CeleryTerm):
     """
     A simple exponential kernel.
     """
-    parameter_names = ("log_amp", "length")
+    def __init__(self,bounds):
+        parameter_names = ("log_amp", "length")
+        super(ExpTerm, self).__init__(parameter_names,bounds)
 
-    def get_real_coefficients(self, params):
-        log_amp, length = params
+
+    def get_coefficients(self):
+        log_amp, length = self.params
+        e = jnp.empty(0)
         return (
-            np.exp(log_amp), 1 / length
+            jnp.atleast_1d(jnp.exp(log_amp)), jnp.atleast_1d(1 / length),e,e,e,e
         )
 
-class ExpTermLog(celerite.terms.Term):
+
+class ExpTermLog(CeleryTerm):
     """
     A simple exponential kernel.
     """
-    parameter_names = ("log_amp", "log10_length")
+    def __init__(self,bounds):
+        parameter_names = ("log_amp", "log10_length")
+        super(ExpTermLog, self).__init__(parameter_names,bounds)
 
-    def get_real_coefficients(self, params):
-        log_amp, log10_length = params
+
+    def get_coefficients(self):
+        log_amp, log10_length = self.params
         length = 10**log10_length
+        e = jnp.empty(0)
         return (
-            np.exp(log_amp), 1 / length
+            jnp.atleast1d(jnp.exp(log_amp)), jnp.atleast_1d(1 / length),e,e,e,e
         )
 
 
-class SimpleProfileTerm(celerite.terms.Term):
+class SimpleProfileTerm(CeleryTerm):
     """
     This class defines the 'simple as possible' kernel, with a Gaussian in the
     phase direction and an exponential in the time direction.
     """
-    parameter_names = ("log_amp", "log10_width", "log10_length")
 
-    def __init__(self, *args, **kwargs):
-        ncoef = kwargs.pop("ncoef", 32)
-        super(SimpleProfileTerm, self).__init__(*args, **kwargs)
+
+    def __init__(self, ncoef, bounds):
+        parameter_names = ("log_amp", "log10_width", "log10_length")
+        super(SimpleProfileTerm, self).__init__(parameter_names,bounds)
         self.ncoef = ncoef
 
-    def get_real_coefficients(self, params):
-        log_amp, log_width, log10_length = params
+
+    def get_coefficients(self):
+        log_amp, log_width, log10_length = self.params
         width = 10 ** log_width
         conc = 10**-log10_length
-        zero_coef = np.sqrt(2 * np.pi * width ** 2)
-        return (
-            np.exp(log_amp) * zero_coef, conc
-        )
-
-    def get_complex_coefficients(self, params):
-        log_amp, log_width, log10_length = params
-        width = 10 ** log_width
-        conc = 10 ** -log10_length
-        omega0 = 2 * np.pi
+        zero_coef = jnp.sqrt(2 * jnp.pi * width ** 2)
+        omega0 = 2 * jnp.pi
 
         nc = self.ncoef
-        gauss_denominator = 2 * np.pi ** 2 * width ** 2
-        gauss_scale = 2 * np.sqrt(2 * np.pi * width ** 2)
-        n = np.arange(nc) + 1
+        gauss_denominator = 2 * jnp.pi ** 2 * width ** 2
+        gauss_scale = 2 * jnp.sqrt(2 * jnp.pi * width ** 2)
+        n = jnp.arange(nc) + 1
 
-        d = omega0 * n
+        d = jnp.array(omega0 * n)
 
-        a = np.exp(log_amp) * gauss_scale * np.ones_like(n) * np.exp(-gauss_denominator * n ** 2)
-        b = np.zeros_like(n)
-        c = np.ones_like(n) * conc
+        a = jnp.exp(log_amp) * gauss_scale * jnp.ones_like(n) * jnp.exp(-gauss_denominator * n ** 2)
+        b = jnp.zeros_like(n)
+        c = jnp.ones_like(n) * conc
 
         return (
-            a, b, c, d
+            jnp.atleast_1d(jnp.exp(log_amp) * zero_coef), jnp.atleast_1d(conc), a, b, c, d
         )
 
 
-def make_custom_profile_term(phase_kernel, time_kernel, omega0=2 * np.pi, optimise_tau_real_only=False):
+def make_custom_profile_term(phase_kernel, time_kernel, omega0=2 * jnp.pi, optimise_tau_real_only=False):
     pnames = time_kernel.parameter_names + phase_kernel.parameter_names
 
-    time_mask = np.array([k in time_kernel.parameter_names for k in pnames], dtype=bool)
-    fourier_mask = np.array([k in phase_kernel.parameter_names for k in pnames], dtype=bool)
+    #@todo: Work out how to check if the time kernel is real or complex.
 
-    def extract_time_args(kwargs):
-        """
-        Extract the time kernel arguments from the kwargs.
-        """
-        plist1 = set(time_kernel.parameter_names)
-        plist2 = set(time_kernel.__init__.__code__.co_varnames)
-        plist2.discard('self')
-        plist2.discard('kwargs')
-        plist2.discard('args')
-        plist = plist1.union(plist2)
-        retargs = {k: kwargs[k] for k in plist if k in kwargs}
-        for arg in plist2:
-            kwargs.pop(arg)
+    class HalfProfileTerm(CeleryTerm):
 
-        return kwargs, retargs
 
-    class HalfProfileTerm(celerite.terms.Term):
-        parameter_names = pnames
+        def __init__(self,bounds):
+            super(HalfProfileTerm, self).__init__(pnames,bounds)
 
-        def __init__(self, *args, **kwargs):
-            kwargs,timeargs = extract_time_args(kwargs)
-            super(HalfProfileTerm, self).__init__(*args, **kwargs)
-            self.timekernel = time_kernel(**timeargs)
 
-        def get_real_coefficients(self, params):
-            time_params = params[time_mask]
-            fourier_params = params[fourier_mask]
-            p, r = self.timekernel.get_real_coefficients(time_params)
-            a = p * phase_kernel.theta0(fourier_params)
-            c = r
-            return (a, c)
+        def set_param_mask(self, allparams):
+            phase_kernel.set_param_mask(allparams)
+            time_kernel.set_param_mask(allparams)
+            return super().set_param_mask(allparams)
 
-        def get_complex_coefficients(self, params):
-            time_params = params[time_mask]
-            fourier_params = params[fourier_mask]
-            p, r = self.timekernel.get_real_coefficients(time_params)
+        def set_params(self, params):
+            phase_kernel.set_params(params)
+            time_kernel.set_params(params)
+        
+        def get_coefficients(self):
 
-            n, theta_n = phase_kernel(fourier_params)
+            p, r, _ ,_ ,_,_ = time_kernel.get_coefficients()
+            ra = p * phase_kernel.theta0()
+            rc = r
+
+            n, theta_n = phase_kernel()
             a = 2 * p * theta_n
-            b = np.zeros_like(n)
-            c = r * np.ones_like(n)
+            b = jnp.zeros_like(n)
+            c = r * jnp.ones_like(n)
             d = omega0 * n
 
-            return (
-                a, b, c, d
-            )
+            return (jnp.atleast_1d(ra),jnp.atleast_1d(rc),
+                    jnp.atleast_1d(a),jnp.atleast_1d(b),jnp.atleast_1d(c),jnp.atleast_1d(d))
 
-    class CmplxProfileTerm(celerite.terms.Term):
-        parameter_names = pnames
+    class FullProfileTerm(CeleryTerm):
 
-        def __init__(self, *args, **kwargs):
-            kwargs, timeargs = extract_time_args(kwargs)
-            super(CmplxProfileTerm, self).__init__(*args, **kwargs)
-            self.timekernel = time_kernel(**timeargs)
+        def __init__(self,bounds):
+            super(FullProfileTerm, self).__init__(pnames,bounds)
+            phase_kernel.set_param_mask(pnames)
+            time_kernel.set_param_mask(pnames)
 
-        def get_complex_coefficients(self, params):
-            time_params = params[time_mask]
-            fourier_params = params[fourier_mask]
-            p, q, r, s = self.timekernel.get_complex_coefficients(time_params)
+        def set_params(self, params):
+            phase_kernel.set_params(params)
+            time_kernel.set_params(params)
 
-            n, theta_n = phase_kernel(fourier_params)
-            theta_0 = phase_kernel.theta0(fourier_params)
+        def set_param_mask(self, allparams):
+            phase_kernel.set_param_mask(allparams)
+            time_kernel.set_param_mask(allparams)
+            return super().set_param_mask(allparams)
 
-            a = np.concatenate((p * theta_n, p * theta_n, [p * theta_0]))
-            b = np.concatenate((q * theta_n, q * theta_n, [q * theta_0]))
-            c = r * np.ones(2 * len(n) + 1)
-            d = np.concatenate((s - omega0 * n, s + omega0 * n, [s]))
+        def get_coefficients(self):
+            # Complex Terms...
 
-            return (
-                a, b, c, d
-            )
+            rp, rr , p, q, r, s = time_kernel.get_coefficients()
 
-    class FullProfileTerm(celerite.terms.Term):
-        parameter_names = pnames
 
-        def __init__(self, *args, **kwargs):
-            kwargs, timeargs = extract_time_args(kwargs)
-            super(FullProfileTerm, self).__init__(*args, **kwargs)
-            self.timekernel = time_kernel(**timeargs)
+            theta0 = phase_kernel.theta0()
+            e = jnp.empty(0)
 
-        def get_real_coefficients(self, params):
-            time_params = params[time_mask]
-            fourier_params = params[fourier_mask]
-            test, _, _, _ = self.timekernel.get_complex_coefficients(time_params)
-            if test.size > 0:
-                # There are complex terms - we only will have complex terms
-                return (np.empty(0), np.empty(0))
-            else:
-                # The kernel only has real terms, so we have some real terms.
-                theta0 = phase_kernel.theta0(fourier_params)
-                p, r = self.timekernel.get_real_coefficients(time_params)
-                a = p * theta0
-                c = r
-                return (a, c)
+            n, theta_n = phase_kernel()
+            theta_0 = phase_kernel.theta0()
 
-        def get_complex_coefficients(self, params):
-            time_params = params[time_mask]
-            fourier_params = params[fourier_mask]
-            p, q, r, s = self.timekernel.get_complex_coefficients(time_params)
-            if p.size == 0:
-                # Only real Terms...
-                p, r = self.timekernel.get_real_coefficients(time_params)
-                n, theta_n = phase_kernel(fourier_params)
-                a = 2 * np.outer(p, theta_n).flatten()
-                b = np.zeros_like(a)
-                c = np.outer(r, np.ones_like(theta_n)).flatten()
-                d = np.outer(omega0 * n, np.ones_like(p)).flatten()
-                return (a, b, c, d)
-            else:
-                # Complex terms...
-                # TODO: Handle the case where p,q,r,s have more than one value.
-                n, theta_n = phase_kernel(fourier_params)
-                theta_0 = phase_kernel.theta0(fourier_params)
+            a = jnp.concatenate((p * theta_n, p * theta_n, jnp.atleast_1d(p * theta_0)))
+            b = jnp.concatenate((q * theta_n, q * theta_n, jnp.atleast_1d(q * theta_0)))
+            c = r * jnp.ones(2 * len(n) + 1)
+            d = jnp.concatenate((s - omega0 * n, s + omega0 * n, jnp.atleast_1d(s)))
+            return (e,e, a, b, c, d)
 
-                a = np.concatenate((p * theta_n, p * theta_n, [p * theta_0]))
-                b = np.concatenate((q * theta_n, q * theta_n, [q * theta_0]))
-                c = r * np.ones(2 * len(n) + 1)
-                d = np.concatenate((s - omega0 * n, s + omega0 * n, [s]))
-                return (a, b, c, d)
+                
 
     if optimise_tau_real_only:
         return HalfProfileTerm
     else:
         return FullProfileTerm
+    
+
+class CeleryWhiteTransform:
+    def __init__(self, parameter_names,bounds):
+        self.nparams=len(parameter_names)
+        self.parameter_names=parameter_names
+        lowbounds=[]
+        hibounds=[]
+        for parameter in parameter_names:
+            lowbounds.append(bounds[parameter][0])
+            hibounds.append(bounds[parameter][1])
+        self.lowbounds=jnp.array(lowbounds)
+        self.hibounds=jnp.array(hibounds)
+        self.param_mask=None
+        self.params=(self.hibounds+self.lowbounds)/2
+
+    def set_param_mask(self, allparams):
+        self.param_mask = jnp.array([True if param in self.parameter_names else False for param in allparams])
+
+    def set_params(self,params):
+        self.params=params[self.param_mask]
+
+
+class EquadWhiteTransform(CeleryWhiteTransform):
+    def __init__(self,bounds):
+        parameter_names = ("log_equad",)
+        super(EquadWhiteTransform, self).__init__(parameter_names,bounds)
+
+    def __call__(self,yerr):
+        return jnp.sqrt(jnp.exp(2*self.params[0]) + yerr ** 2)

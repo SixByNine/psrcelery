@@ -1,7 +1,8 @@
 import multiprocessing
 
-import celerite
+import celerite2.jax as celerite2
 import numpy as np
+import jax.numpy as jnp
 import sklearn.decomposition
 from matplotlib import pyplot as plt
 import scipy.stats
@@ -10,6 +11,11 @@ import pickle
 import dill
 from matplotlib.ticker import FormatStrFormatter
 
+
+# @TODO: Can we compress the covariance matricies since the data is regularly spaced?
+# @TODO: This would reduce the massive size of the data files.
+# @TODO: Do we need mean rather than median - Bhavnesh is looking into it.
+# @TODO: Can we use celerite2 with jax for massive gains in speed?
 
 def loadCelery(fname):
     datfile = np.load(fname)
@@ -67,6 +73,7 @@ class Celery:
         self.phs = np.linspace(0, 1, nbin, endpoint=False)
         self.avgprof = np.median(self.data, axis=0)
         self.reset_onoff()
+        print("TEST VERSION")
 
     def save(self, fname):
         data = {}
@@ -110,6 +117,7 @@ class Celery:
         self.nudot_err = nudot_err
 
     def make_xydata(self, rounded_mjd_factor=1):
+        self.avgprof = np.median(self.data, axis=0)
         nsub, nbin = self.data.shape
         self.rounded_mjd_factor = rounded_mjd_factor
         self.number_profiles = nsub
@@ -142,49 +150,65 @@ class Celery:
         print(f"nc={nc}")
 
         if matern:
-            CustomTerm = terms.make_custom_profile_term(phase_kernels.GaussianPhaseKernel(nc),
-                                                        celerite.terms.Matern32Term)
-            celkern = CustomTerm(log_sigma=-4, log10_width=log_min_width, log_rho=np.log(0.5*(max_length+min_length)),
-                                 bounds={'log_sigma': (min_lnamp / 2, max_lnamp / 2),
+            bounds={'log_sigma': (min_lnamp / 2, max_lnamp / 2),
                                          'log10_width': (log_min_width, -0.5),
-                                         'log_rho': (np.log(min_length), np.log(max_length))},eps=1e-5)
+                                         'log_rho': (np.log(min_length), np.log(max_length)),'log_white': (-10, -1)}
+            
+            CustomTerm = terms.make_custom_profile_term(phase_kernels.GaussianPhaseKernel(nc),
+                                                        terms.Matern32Term(bounds,eps=1e-5))
+            celkern = CustomTerm(bounds)
 
         else:
             prior_bounds = {'log_amp': (min_lnamp, max_lnamp), 'log10_width': (log_min_width, -0.5),
-                            'log10_length': (np.log10(min_length), np.log10(max_length))}
-            celkern = terms.SimpleProfileTerm(log_amp=-8,
-                                              log10_width=log_min_width,
-                                              log10_length=np.log10(0.5*(max_length+min_length)),
-                                              ncoef=nc,
+                            'log10_length': (np.log10(min_length), np.log10(max_length)),'log_white': (-10, -1)}
+            celkern = terms.SimpleProfileTerm(ncoef=nc,
                                               bounds=prior_bounds)
 
-        celkern += celerite.terms.JitterTerm(log_sigma=-6, bounds={'log_sigma': (-10, -1)})
-        self.set_gp_model(celkern)
+        #celkern += celerite.terms.JitterTerm(log_sigma=-6, bounds={'log_sigma': (-10, -1)})
+        white_transform = terms.EquadWhiteTransform(bounds={'log_equad': (-10, -1)})
+        # @TODO: Need to add a way to keep track of the extra white noise to add to the kernel.
+        # @TODO: Need to track the bounds. Why did I do this in the terms? Maybe it should come out of then
+        #        terms and be dealt with here in psrcelery.
+        self.set_gp_model(celkern, white_transform)
 
-    def set_gp_model(self, kernel):
-        self.cel_gp = celerite.GP(kernel, mean=np.mean(self.y))
-        self.cel_gp.compute(self.x, self.yerr)
+    def set_gp_model(self, kernel, white_transform):
+        self.param_names = kernel.parameter_names + white_transform.parameter_names
+        kernel.set_param_mask(self.param_names)
+        white_transform.set_param_mask(self.param_names)
 
-    def log_likelihood(self, params):
-        for i, ip in enumerate(self.cel_gp.get_parameter_bounds()):
-            if params[i] < ip[0] or params[i] > ip[1]:
-                return -np.inf
-        self.cel_gp.set_parameter_vector(params)
+        self.gp_low_bounds = np.concatenate((kernel.lowbounds, white_transform.lowbounds))
+        self.gp_high_bounds = np.concatenate((kernel.hibounds, white_transform.hibounds))
+        init_params = np.concatenate((kernel.params, white_transform.params))
+        self.cel_gp = celerite2.GaussianProcess(kernel, mean=np.mean(self.y))
+        self.white_transform = white_transform
+        self.set_parameter_vector(init_params)
+
+    def get_parameter_bounds(self):
+        return np.array(list(zip(self.gp_low_bounds, self.gp_high_bounds)))
+
+    def get_parameter_bound_dict(self):
+        return dict(zip(self.param_names, zip(self.gp_low_bounds, self.gp_high_bounds)))
+
+    def log_likelihood(self,params):
+        self.set_parameter_vector(params)
         return self.cel_gp.log_likelihood(self.y)
 
     def sample_uniform(self, nsamples):
-        low = np.array(self.cel_gp.get_parameter_bounds()).T[0]
-        up = np.array(self.cel_gp.get_parameter_bounds()).T[1]
-
-        p0 = np.random.uniform(0, 1, nsamples * len(self.cel_gp.get_parameter_names())) * np.tile((up - low),
-                                                                                                  nsamples) + np.tile(
-            low,
-            nsamples)
+        # Needs rewrite.
+        low = np.array(self.gp_low_bounds)
+        up = np.array(self.gp_high_bounds)
+        p0 = np.random.uniform(0, 1, nsamples * len(self.param_names)) * np.tile((up - low), nsamples) 
+        p0 += np.tile(low,nsamples)
         return p0.reshape(nsamples, -1)
 
     def set_parameter_vector(self, params):
-        self.parameter_vector = np.array(params)
-        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.parameter_vector = jnp.array(params)
+        self.white_transform.set_params(self.parameter_vector)
+        self.cel_gp.kernel.set_params(self.parameter_vector)
+        self.cel_gp.compute(self.x, yerr=self.white_transform(self.yerr))
+
+    def get_parameter_vector(self):
+        return self.parameter_vector
 
     def _predict_blocks(self, xstack, nthread=1):
         nprof, nbin = xstack.shape
@@ -205,13 +229,13 @@ class Celery:
         return pred_y, pred_yerr, pred_block_cov
 
     def predict_profiles_blockwise(self, nthread=1):
-        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.set_parameter_vector(self.parameter_vector)
         xstack = self.x.reshape((self.number_profiles, -1))
         self.pred_mean, self.pred_std, self.pred_block_cov = self._predict_blocks(xstack, nthread)
         return self.pred_mean, self.pred_std
 
     def predict_profiles_resampled_blockwise(self, number_output_days=256, nthread=1):
-        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.set_parameter_vector(self.parameter_vector)
         rmjd = np.round(self.mjd * self.rounded_mjd_factor)
         rmjd -= rmjd[0]
         self.number_output_days = number_output_days
@@ -228,7 +252,7 @@ class Celery:
         return self.pred_mean_resample, self.pred_std_resample
 
     def predict_profiles(self, ignore_covariance=False):
-        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.set_parameter_vector(self.parameter_vector)
         self.pred_block_cov = None
         if ignore_covariance:
             self.pred_mean, pred_var = self.cel_gp.predict(self.y, return_var=True)
@@ -271,7 +295,7 @@ class Celery:
         return self.pred_mean_resample, self.pred_std_resample
 
     def make_resampled_block_matricies(self):
-        self.cel_gp.set_parameter_vector(self.parameter_vector)
+        self.set_parameter_vector(self.parameter_vector)
         xstack = self.x_resampled.reshape((self.number_output_days, -1))
         self.pred_block_cov_resample = []
         for i, x in enumerate(xstack):
@@ -352,7 +376,7 @@ class Celery:
 
     def rainbowplot(self, outname=None, show_pca=True, show_nudot=True, figsize=(7, 14), pca_comps=(0,),
                     interpolation=None, scale_plots=False, eigenvalue_colors=None, title="Profile", cmap='rainbow',
-                    glitches=[],nudot_bounds=None):
+                    glitches=[],nudot_bounds=None,nudot_index=15):
         if self.nudot_val is None:
             show_nudot = False
         if self.eigenvalues is None and self.eigenvalues_resample is None:
@@ -583,14 +607,15 @@ class Celery:
                         profile_plot.plot(translate_phase(self.phs[self.onmask]), profhi, color='r', alpha=0.5,
                                           label=f"$+\\lambda_{{max}}\\mathbf{{e}}_{icomp}$")
             if show_nudot:
+                nudot_factor = 10**(nudot_index-15)
                 ax_nudot = left_plot.twiny()
-                ax_nudot.set_xlabel(r"$\dot{\nu}$ $(10^{-15}\mathrm{Hz^2})$")
-                ax_nudot.plot(self.nudot_val, self.nudot_mjd, color='k', ls='--')
+                ax_nudot.set_xlabel(r"$\dot{\nu}$ $(10^{-"+f"{nudot_index}"+"}\mathrm{Hz^2})$")
+                ax_nudot.plot(self.nudot_val*nudot_factor, self.nudot_mjd, color='k', ls='--')
                 if self.nudot_err is not None:
-                    ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val - self.nudot_err,
-                                           self.nudot_val + self.nudot_err,
+                    ax_nudot.fill_betweenx(self.nudot_mjd, self.nudot_val*nudot_factor - self.nudot_err*nudot_factor,
+                                           self.nudot_val*nudot_factor + self.nudot_err*nudot_factor,
                                            color='k', alpha=0.3)
-                nudots = self.nudot_val[(self.nudot_mjd > extent[2]) & (self.nudot_mjd < extent[3])]
+                nudots = self.nudot_val[(self.nudot_mjd > extent[2]) & (self.nudot_mjd < extent[3])]*nudot_factor
                 if nudot_bounds is None:
                     nudot_max = np.amax(nudots)
                     nudot_min = np.amin(nudots)
@@ -604,11 +629,13 @@ class Celery:
                     cmax += 0.1 * rng
                     cmin -= 0.1 * rng
                     ax_nudot.set_xlim(cmin, cmax)
-                    left_plot.set_xlim(eigen_nudot_convert(cmin), eigen_nudot_convert(cmax))
+                    left_plot.set_xlim(eigen_nudot_convert(cmin/nudot_factor), eigen_nudot_convert(cmax/nudot_factor))
 
                 else:
                     rng = nudot_max - nudot_min
-                    ax_nudot.set_xlim(nudot_min - 0.1 * rng, nudot_max + 0.1 * rng)
+                    ax_nudot.set_xlim((nudot_min - 0.1 * rng),
+                                      (nudot_max + 0.1 * rng))
+                ax_nudot.xaxis.set_major_locator(plt.MaxNLocator(2))
 
         profile_plot.legend(bbox_to_anchor=(-0.1, 1), loc='upper right', prop={'size': 12})
 

@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 import os
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["OMP_NUM_THREADS"] = "1"
+# os.environ["MKL_NUM_THREADS"] = "1"
+# os.environ["NUMEXPR_NUM_THREADS"] = "1"
+# os.environ["OMP_NUM_THREADS"] = "1"
 import argparse
 import psrcelery
 import numpy as np
 import multiprocessing
 from scipy.optimize import minimize, basinhopping
 
+import jax
 
 def init_thread(celery):
     global _celery
@@ -19,11 +20,9 @@ def init_thread(celery):
 def log_like(p):
     global _celery
     return _celery.log_likelihood(p)
+
 def neg_log_like_thread(params):
-    global _celery
-    gp = _celery.cel_gp
-    gp.set_parameter_vector(params)
-    return -gp.log_likelihood(_celery.y)
+    return -log_like(params)
 
 
 if __name__ == '__main__':
@@ -51,13 +50,33 @@ if __name__ == '__main__':
 
 
 
-    def neg_log_like(params, y, gp):
-        gp.set_parameter_vector(params)
-        return -gp.log_likelihood(y)
+    def neg_log_like(params,celery):
+        return -celery.log_likelihood(params)
 
     print("Solving GP")
-    initial_params = celery.cel_gp.get_parameter_vector()
-    bounds = celery.cel_gp.get_parameter_bounds()
+    initial_params = celery.get_parameter_vector()
+    bounds = celery.get_parameter_bounds()
+    print(bounds)
+
+    print(celery.log_likelihood(initial_params))
+
+    ll=jax.jit(neg_log_like,static_argnums=(1,))
+    
+    print(ll(initial_params,celery))
+
+    import jax.numpy as jnp
+    testv = jnp.array(celery.sample_uniform(10))
+    import time
+    t0=time.time()
+    for i in testv:
+        print(ll(i,celery))
+    t1=time.time()
+    for i in testv:
+        print(celery.log_likelihood(i))
+    t2=time.time()
+    print(t1-t0,t2-t1)
+
+    exit(1)
 
     if args.emcee:
         import emcee, corner
@@ -66,7 +85,7 @@ if __name__ == '__main__':
         import matplotlib.pyplot as plt
 
 
-        ndim = len(celery.cel_gp.get_parameter_vector())
+        ndim = len(celery.get_parameter_vector())
         nwalkers = args.nwalkers
         thin=args.thin
         nsamples=args.niter
@@ -103,16 +122,16 @@ if __name__ == '__main__':
                 soln = differential_evolution(neg_log_like_thread, bounds,callback=print_fun,workers=pool.map,updating='deferred')
                 celery.unpack_gp()
         else:
-            soln = differential_evolution(neg_log_like, bounds, args=(celery.y, celery.cel_gp))
+            soln = differential_evolution(neg_log_like, bounds, args=(celery,))
         celery.set_parameter_vector(soln.x)
     elif args.basinhop:
         def print_fun(x, f, accepted):
             print(f"{x} at LL {-f:.2f}: accepted {accepted}")
-        soln = basinhopping(neg_log_like, initial_params, niter=20, minimizer_kwargs={"bounds": bounds, "args": (celery.y, celery.cel_gp)},callback=print_fun)
+        soln = basinhopping(neg_log_like, initial_params, niter=20, minimizer_kwargs={"bounds": bounds, "args": (celery,)},callback=print_fun)
         celery.set_parameter_vector(soln.x)
     else:
         soln = minimize(neg_log_like, initial_params,
-                    method="L-BFGS-B", bounds=bounds, args=(celery.y, celery.cel_gp))
+                    method="L-BFGS-B", bounds=bounds, args=(celery,))
 
         celery.set_parameter_vector(soln.x)
 

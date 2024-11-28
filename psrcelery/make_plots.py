@@ -82,8 +82,10 @@ if psr=="B1740-03":
     nudot_bound=[-9.5,-6.5]
 if psr=="B1826-17":
     icomps=[3]
+if psr=="B1828-11":
+    nudot_bound=[-367.5, -364.0]
 if psr=="B1917+00":
-    nudot_bound=[-4.743,-4.739]
+    nudot_bound=[-4.744,-4.738]
 if psr=="B0919+06":
     nudot_bound=[-74.3,-73.5]
     nudot_bound=[-74.4,-73.55]
@@ -92,6 +94,8 @@ if psr=="B1818-04":
     icomps=[0]
 if psr=="J2043+2740":
     icomps=[0,1]
+if psr=="B1540-06":
+    nudot_bound=[-1.76, -1.725]
 if psr=="B1917+00" and (lab=="_combo" or lab=='_afb'):
     print("test: swap")
     celery.eigenprofiles[0], celery.eigenprofiles[1] = celery.eigenprofiles[1], celery.eigenprofiles[0]
