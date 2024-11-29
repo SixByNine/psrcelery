@@ -32,7 +32,9 @@ if __name__ == '__main__':
     parser.add_argument('input', type=str, help='Input file')
     parser.add_argument('--min_length', type=float,default=40, help='Minimum lengthscale')
     parser.add_argument('--max_length', type=float,default=4000, help='Maximum lengthscale')
-    parser.add_argument('--min_width', type=float,default=0.16, help='Minimum width')
+    parser.add_argument('--min_width', type=float,default=0.05, help='Minimum width')
+    parser.add_argument('--max_width', type=float,default=0.3, help='Maximum width')
+
     parser.add_argument('--nthread', type=int, default=4, help='Number of threads')
     parser.add_argument('--matern', action='store_true', help='Use Matern kernel')
     parser.add_argument('--output', type=str, default='celery_out.npz', help='Output file')
@@ -46,7 +48,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     celery = psrcelery.celery.loadCelery(args.input)
-    celery.use_standard_kernel(log_min_width=np.log10(args.min_width), min_length=args.min_length,
+    celery.use_standard_kernel(log_min_width=np.log10(args.min_width),log_max_width=np.log10(args.max_width),
+                                min_length=args.min_length,
                                max_length=args.max_length,matern=args.matern)
 
 

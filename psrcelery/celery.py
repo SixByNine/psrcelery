@@ -25,12 +25,24 @@ def loadCelery(fname):
     # Fixes for reading some older versions...
     if celery.onmask is not None and celery.number_onpulse_bins is None:
         celery.number_onpulse_bins = np.sum(celery.onmask)
+    if 'pred_block_cov_resample' in celery.__dict__:
+        print("Converting pre1.0 format psrcelery file")
+        celery.pred_phase_cov_function_resample = np.copy(celery.pred_block_cov_resample[0][0])
+        celery.pred_phase_cov_function_resample /= celery.pred_phase_cov_function_resample[0]
+        celery.pred_time_variance_resample = np.copy(celery.pred_block_cov_resample[:,0,0])
+        del celery.pred_block_cov_resample
+    if 'pred_block_cov' in celery.__dict__:
+        celery.pred_phase_cov_function = np.copy(celery.pred_block_cov[0][0])
+        celery.pred_phase_cov_function /= celery.pred_phase_cov_function[0]
+        celery.pred_time_variance = np.copy(celery.pred_block_cov[:,0,0])
+        del celery.pred_block_cov  
 
     return celery
 
 
 class Celery:
     def __init__(self, data, mjd):
+        self.celery_version=1.0
         self.eigenvalues_data = None
         self.eigenvalue_data_err = None
         self.kernel_values = None
@@ -47,12 +59,15 @@ class Celery:
         self.eigenvalues = None
         self.eigenvalues_err = None
         self.eigenvalues_resample_err = None
+
         self.pred_mean_resample = None
-        self.pred_std_resample = None
-        self.pred_block_cov_resample = None
-        self.pred_std = None
+        self.pred_time_variance_resample = None
+        self.pred_phase_cov_function_resample = None
+
         self.pred_mean = None
-        self.pred_block_cov = None
+        self.pred_time_variance = None
+        self.pred_phase_cov_function = None
+
         self.nudot_val = self.nudot_err = self.nudot_mjd = None
         self.x = self.y = self.yerr = None
         self.subdata = None
@@ -135,7 +150,8 @@ class Celery:
         self.yerr = np.repeat(offrms, nbin)[self.ymask]
         return self.x, self.y, self.yerr
 
-    def use_standard_kernel(self, log_min_width=-1.5, min_length=10, max_length=4000, min_lnamp=-12, max_lnamp=-2,
+    def use_standard_kernel(self, log_min_width=-1.5, log_max_width=-0.5, 
+                            min_length=10, max_length=4000, min_lnamp=-12, max_lnamp=-2,
                             matern=False):
         nc = int(10 ** (
             -log_min_width) / 2)  # This is determined empirically - I'm sure there is a better logical way to do it.
@@ -146,11 +162,11 @@ class Celery:
                                                         celerite.terms.Matern32Term)
             celkern = CustomTerm(log_sigma=-4, log10_width=log_min_width, log_rho=np.log(0.5*(max_length+min_length)),
                                  bounds={'log_sigma': (min_lnamp / 2, max_lnamp / 2),
-                                         'log10_width': (log_min_width, -0.5),
+                                         'log10_width': (log_min_width, log_max_width),
                                          'log_rho': (np.log(min_length), np.log(max_length))},eps=1e-5)
 
         else:
-            prior_bounds = {'log_amp': (min_lnamp, max_lnamp), 'log10_width': (log_min_width, -0.5),
+            prior_bounds = {'log_amp': (min_lnamp, max_lnamp), 'log10_width': (log_min_width, log_max_width),
                             'log10_length': (np.log10(min_length), np.log10(max_length))}
             celkern = terms.SimpleProfileTerm(log_amp=-8,
                                               log10_width=log_min_width,
@@ -158,7 +174,7 @@ class Celery:
                                               ncoef=nc,
                                               bounds=prior_bounds)
 
-        celkern += celerite.terms.JitterTerm(log_sigma=-6, bounds={'log_sigma': (-10, -1)})
+        celkern += celerite.terms.JitterTerm(log_sigma=-6, bounds={'log_sigma': (-12, -1)})
         self.set_gp_model(celkern)
 
     def set_gp_model(self, kernel):
@@ -189,26 +205,30 @@ class Celery:
     def _predict_blocks(self, xstack, nthread=1):
         nprof, nbin = xstack.shape
         pred_y = np.zeros_like(xstack)
-        pred_yerr = np.zeros_like(xstack)
-        pred_block_cov = np.zeros((nprof, nbin, nbin))
+
         if nthread > 1:
             with multiprocessing.Pool(nthread, initializer=celery_threads.init,
                                       initargs=(dill.dumps(self.cel_gp), xstack, self.y)) as pool:
                 ret = pool.map(celery_threads.run, range(len(xstack)))
                 for i, x in enumerate(xstack):
-                    pred_y[i], pred_yerr[i], pred_block_cov[i] = ret[i]
+                    pred_y[i] = ret[i]
         else:
             for i, x in enumerate(xstack):
                 print(f"{i}/{self.number_profiles}")
-                pred_y[i], pred_block_cov[i] = self.cel_gp.predict(self.y, x, return_cov=True)
-                pred_yerr[i] = np.sqrt(np.diag(pred_block_cov[i]))
-        return pred_y, pred_yerr, pred_block_cov
+                pred_y[i] = self.cel_gp.predict(self.y, x, return_cov=False)
+
+        # Compute the error in each profile from the error in the central bin
+        print("Computing variances etc")
+        _, pred_1d_var = self.cel_gp.predict(self.y, xstack[:,nbin//2], return_cov=False,return_var=True)
+        pred_cov_function= self.cel_gp.kernel.get_value(xstack[0])
+        pred_cov_function/=pred_cov_function[0]
+        return pred_y, pred_1d_var, pred_cov_function
 
     def predict_profiles_blockwise(self, nthread=1):
         self.cel_gp.set_parameter_vector(self.parameter_vector)
         xstack = self.x.reshape((self.number_profiles, -1))
-        self.pred_mean, self.pred_std, self.pred_block_cov = self._predict_blocks(xstack, nthread)
-        return self.pred_mean, self.pred_std
+        self.pred_mean, self.pred_time_variance, self.pred_phase_cov_function = self._predict_blocks(xstack, nthread)
+        return self.pred_mean
 
     def predict_profiles_resampled_blockwise(self, number_output_days=256, nthread=1):
         self.cel_gp.set_parameter_vector(self.parameter_vector)
@@ -221,63 +241,14 @@ class Celery:
         self.x_resampled += np.repeat(self.rmjd_resampled, self.number_onpulse_bins)
         xstack = self.x_resampled.reshape((self.number_output_days, -1))
 
-        self.pred_mean_resample, self.pred_std_resample, self.pred_block_cov_resample = self._predict_blocks(xstack,
+        self.pred_mean_resample, self.pred_time_variance_resample, self.pred_phase_cov_function_resample = self._predict_blocks(xstack,
                                                                                                              nthread)
 
         self.kernel_values = np.reshape(self.cel_gp.kernel.get_value(self.x_resampled), (self.number_output_days, -1))
-        return self.pred_mean_resample, self.pred_std_resample
+        return self.pred_mean_resample
 
-    def predict_profiles(self, ignore_covariance=False):
-        self.cel_gp.set_parameter_vector(self.parameter_vector)
-        self.pred_block_cov = None
-        if ignore_covariance:
-            self.pred_mean, pred_var = self.cel_gp.predict(self.y, return_var=True)
-            self.pred_std = np.sqrt(pred_var)
-        else:
-            self.pred_mean, pred_cov = self.cel_gp.predict(self.y, return_cov=True)
-            self.pred_std = np.sqrt(np.diag(pred_cov))
-            self.pred_block_cov = [pred_cov[i * self.number_onpulse_bins:(i + 1) * self.number_onpulse_bins,
-                                   i * self.number_onpulse_bins:(i + 1) * self.number_onpulse_bins] for i in
-                                   range(pred_cov.shape[0] // self.number_onpulse_bins)]
-        return self.pred_mean, self.pred_std
 
-    def predict_resampled(self, number_output_days=256, ignore_covariance=False):
-        self.cel_gp.set_parameter_vector(self.parameter_vector)
-        self.pred_block_cov_resample = None
-        rmjd = np.round(self.mjd * self.rounded_mjd_factor)
-        rmjd -= rmjd[0]
 
-        self.rmjd_resampled = np.round(np.linspace(rmjd[0], rmjd[-1], number_output_days))
-        self.mjd_resampled = self.rmjd_resampled / self.rounded_mjd_factor
-        self.x_resampled = np.tile(np.linspace(0, 1, self.number_onpulse_bins, endpoint=False), number_output_days)
-        self.x_resampled += np.repeat(self.rmjd_resampled, self.number_onpulse_bins)
-        print(len(self.x_resampled))
-        if ignore_covariance:
-            self.pred_mean_resample, pred_var = self.cel_gp.predict(self.y, self.x_resampled, return_var=True)
-            self.pred_std_resample = np.sqrt(pred_var)
-        else:
-            self.pred_mean_resample, pred_cov_resample = self.cel_gp.predict(self.y, self.x_resampled, return_cov=True)
-            # The following horrific line of code extracts block diagonal matrices.
-            self.pred_block_cov_resample = [
-                pred_cov_resample[i * self.number_onpulse_bins:(i + 1) * self.number_onpulse_bins,
-                i * self.number_onpulse_bins:(i + 1) * self.number_onpulse_bins] for i in
-                range(pred_cov_resample.shape[0] // self.number_onpulse_bins)]
-
-            self.pred_std_resample = np.sqrt(np.diag(pred_cov_resample))
-
-        self.number_output_days = number_output_days
-
-        self.kernel_values = np.reshape(self.cel_gp.kernel.get_value(self.x_resampled), (self.number_output_days, -1))
-        return self.pred_mean_resample, self.pred_std_resample
-
-    def make_resampled_block_matricies(self):
-        self.cel_gp.set_parameter_vector(self.parameter_vector)
-        xstack = self.x_resampled.reshape((self.number_output_days, -1))
-        self.pred_block_cov_resample = []
-        for i, x in enumerate(xstack):
-            print(f"{i}/{self.number_output_days}")
-            _, cov = self.cel_gp.predict(self.y, x, return_cov=True)
-            self.pred_block_cov_resample.append(cov)
 
     def get_phase_factor(self):
         dp = self.phs[1] - self.phs[0]
@@ -290,33 +261,51 @@ class Celery:
             eigenprofiles = pca.components_
             self.pca_explained_variance = pca.explained_variance_ratio_
             return eigenvalues, eigenprofiles
-
+        
+        def get_eigenvalue_errors(phase_cov_func, time_variance,eigenprofs):
+            # More time and memory efficient to do it day by day than to construct
+            # a giant covariance matrix
+            nprof=len(time_variance)
+            nbin=len(phase_cov_func)
+            covariance_matrix = np.zeros((nbin, nbin))
+            for i in range(nbin):
+                covariance_matrix[i] = np.roll(phase_cov_func, i)                
+            
+            eigenvalues_err = np.zeros((len(eigenprofs),nprof))
+            
+            for iday in range(nprof):
+                C = covariance_matrix * time_variance[iday]
+                for i, ep in enumerate(eigenprofs):
+                    eigenvalues_err[i,iday] = np.sqrt(ep.T.dot(C).dot(ep))
+            return eigenvalues_err
+        
+                    
         if self.pred_mean_resample is not None:
+            # Do PCA on the resampled profiles
             self.pred_mean_resample[np.isnan(self.pred_mean_resample)] = 0
             self.pred_mean_resample[np.isinf(self.pred_mean_resample)] = 0
             self.eigenvalues_resample, self.eigenprofiles_resample = run_pca(
                 np.reshape(self.pred_mean_resample, (self.number_output_days, -1)))
 
             self.eigenvalues_data = np.dot(self.eigenprofiles_resample, self.subdata[:, self.onmask].T)
-            if self.pred_block_cov_resample is not None:
-                # NOTE - is this really correct?
-                self.eigenvalues_resample_err = []
-                self.eigenvalue_data_err = []
-                dataV = np.var(self.subdata[:, self.offmask], axis=1)
-                for i, c in enumerate(self.eigenprofiles_resample):
-                    self.eigenvalues_resample_err.append(np.sqrt(
-                        c.T.dot(self.pred_block_cov_resample).dot(c)))
-                    self.eigenvalue_data_err.append(np.sqrt(dataV[i] * np.dot(c, c)))  # not efficient, but who cares
+            dataV = np.var(self.subdata[:, self.offmask], axis=1)
+            self.eigenvalue_data_err = np.zeros_like(self.eigenvalues_data)
+            for i, ep in enumerate(self.eigenprofiles_resample):
+                self.eigenvalue_data_err[i] = (np.sqrt(dataV * np.dot(ep, ep)))
+                
+            if self.pred_phase_cov_function_resample is not None:
+                self.eigenvalues_resample_err = get_eigenvalue_errors(self.pred_phase_cov_function_resample,
+                                                                    self.pred_time_variance_resample,
+                                                                    self.eigenprofiles_resample)   
         if self.pred_mean is not None:
+            # Do PCA on the reconstructed profiles
             self.pred_mean[np.isnan(self.pred_mean)] = 0
             self.pred_mean[np.isinf(self.pred_mean)] = 0
             self.eigenvalues, self.eigenprofiles = run_pca(np.reshape(self.pred_mean, (self.number_profiles, -1)))
-            if self.pred_block_cov is not None:
-                # NOTE - is this really correct?
-                self.eigenvalues_err = []
-                for c in self.eigenprofiles:
-                    self.eigenvalues_err.append(np.sqrt(
-                        c.T.dot(self.pred_block_cov).dot(c)))
+            if self.pred_phase_cov_function is not None:
+                self.eigenvalues_err = get_eigenvalue_errors(self.pred_phase_cov_function,
+                                                                    self.pred_time_variance,
+                                                                    self.eigenprofiles)
 
 
     def dampen_edges(self, threshold=0.05):
@@ -376,7 +365,9 @@ class Celery:
         nsub, nbin = self.data.shape
 
         model_profiles = np.reshape(self.pred_mean_resample, (self.number_output_days, -1))
-        model_profile_std = np.reshape(self.pred_std_resample, (self.number_output_days, -1))
+        
+        #model_profile_std = np.reshape(self.pred_std_resample, (self.number_output_days, -1))
+        model_profile_std = np.repeat(np.sqrt(self.pred_time_variance_resample), self.number_onpulse_bins).reshape(self.number_output_days, -1)
         model_profiles_at_data = np.reshape(self.pred_mean, (nsub, -1))
 
         plt.rcParams.update({'font.size': 12})

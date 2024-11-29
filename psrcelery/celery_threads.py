@@ -14,7 +14,6 @@ def run(i):
     global cel_gp
     global x
     global y
-    print(f"{i}")
-    pred_y, cov = cel_gp.predict(y, x[i], return_cov=True)
-    pred_yerr = np.sqrt(np.diag(cov))
-    return pred_y,pred_yerr,cov
+    print(f"{i} HACK")
+    pred_y = cel_gp.predict(y, x[i], return_cov=False)
+    return pred_y
