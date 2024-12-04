@@ -129,9 +129,14 @@ class Celery:
         self.rounded_mjd_factor = rounded_mjd_factor
         self.number_profiles = nsub
         template_subtracted_data = self.data - np.tile(self.avgprof, nsub).reshape((nsub, nbin))
-        self.subdata = template_subtracted_data - np.mean(template_subtracted_data[:, self.onmask], axis=1).reshape(-1,
-                                                                                                                    1)
+        self.subdata = template_subtracted_data - np.mean(template_subtracted_data[:, self.onmask], axis=1).reshape(-1, 1)
         offrms = np.std(self.subdata[:, self.offmask], axis=1)
+
+        # Remove the weighted mean profile, since this is what the GP kind of expects to be zero.
+        weights = (1 / offrms ** 2).reshape(-1,1)
+        weighted_mean_profile = np.sum(self.subdata*weights, axis=0)/np.sum(weights)
+        print(weights.shape, self.subdata.shape, weighted_mean_profile.shape)
+        self.subdata -= weighted_mean_profile
 
         flatdata = self.subdata.flatten()
 

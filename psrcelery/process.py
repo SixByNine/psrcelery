@@ -48,6 +48,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     celery = psrcelery.celery.loadCelery(args.input)
+    celery.make_xydata()
+    
     celery.use_standard_kernel(log_min_width=np.log10(args.min_width),log_max_width=np.log10(args.max_width),
                                 min_length=args.min_length,
                                max_length=args.max_length,matern=args.matern)

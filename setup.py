@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='psrcelery',
-    version='1.0',
+    version='1.01',
     packages=['psrcelery'],
     url='',
     license='',
